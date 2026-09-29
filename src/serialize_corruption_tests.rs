@@ -320,3 +320,97 @@ fn snapshot_fat_aabb_count_mismatch_rejected() {
     long.splice(end..end, extra);
     assert!(!restore(&long), "long fat AABB section was accepted");
 }
+
+/// Each mesh instance points at its run of the packed `uint16_t` material map with
+/// materialOffset (instance byte 44) and materialCount (instance byte 48). A run that leaves
+/// the blob must fail the conversion instead of panicking on the slice.
+#[test]
+fn compound_mesh_material_map_validated() {
+    let bytes = serialized_compound();
+    assert!(convert_bytes_to_compound(&bytes).is_some());
+    let instances = read_i32_at(&bytes, 164) as usize;
+
+    for poison in [-16, i32::MAX] {
+        assert!(
+            convert_bytes_to_compound(&with_i32(&bytes, instances + 44, poison)).is_none(),
+            "mesh material offset accepted poison {poison}"
+        );
+    }
+    for poison in [-1, i32::MAX] {
+        assert!(
+            convert_bytes_to_compound(&with_i32(&bytes, instances + 48, poison)).is_none(),
+            "mesh material count accepted poison {poison}"
+        );
+    }
+}
+
+/// Overwrite a little-endian u16 field in a blob copy.
+fn with_u16(bytes: &[u8], offset: usize, value: u16) -> Vec<u8> {
+    let mut buf = bytes.to_vec();
+    buf[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+    buf
+}
+
+/// A mesh instance's material run must lie inside the packed map section, which runs from
+/// the end of the mesh instance array to the first shared mesh blob. A run pointing back into
+/// the instance array, into a mesh blob, or overrunning the section is rejected even though
+/// it stays inside the buffer.
+#[test]
+fn compound_mesh_material_run_inside_map_section() {
+    let bytes = serialized_compound();
+    assert!(convert_bytes_to_compound(&bytes).is_some());
+    let instances = read_i32_at(&bytes, 164) as usize;
+    let mesh_blob = nested_mesh_start(&bytes);
+
+    for offset in [instances as i32, mesh_blob as i32] {
+        assert!(
+            convert_bytes_to_compound(&with_i32(&bytes, instances + 44, offset)).is_none(),
+            "mesh material run at blob byte {offset} outside the map section was accepted"
+        );
+    }
+
+    // The map section holds alignUp8( 1 * 2 ) = 8 bytes; five entries run into the mesh blob.
+    assert!(
+        convert_bytes_to_compound(&with_i32(&bytes, instances + 48, 5)).is_none(),
+        "mesh material run overrunning the map section was accepted"
+    );
+}
+
+/// The material indices the compound hands out are used as slice indexes (mesh triangle
+/// material -> map entry -> compound material table, convex child -> compound material
+/// table), so a deserialized compound must not carry an index that falls outside its table.
+#[test]
+fn compound_material_indices_validated() {
+    let bytes = serialized_compound();
+    assert!(convert_bytes_to_compound(&bytes).is_some());
+    // The compound has one shared material and the mesh child one map entry.
+    assert_eq!(read_i32_at(&bytes, 140), 1);
+
+    // Mesh instance with fewer map entries than its mesh has materials
+    let instances = read_i32_at(&bytes, 164) as usize;
+    assert!(
+        convert_bytes_to_compound(&with_i32(&bytes, instances + 48, 0)).is_none(),
+        "mesh material count below the mesh material count was accepted"
+    );
+
+    // Map entry outside the compound material table
+    let map = read_i32_at(&bytes, instances + 44) as usize;
+    for value in [1u16, u16::MAX] {
+        assert!(
+            convert_bytes_to_compound(&with_u16(&bytes, map, value)).is_none(),
+            "mesh material map entry {value} was accepted"
+        );
+    }
+
+    // Convex children: capsule (header 144, byte 28), hull instance (header 152, byte 32),
+    // sphere (header 176, byte 16).
+    for (header, field) in [(144usize, 28usize), (152, 32), (176, 16)] {
+        let at = read_i32_at(&bytes, header) as usize + field;
+        for value in [1u16, u16::MAX] {
+            assert!(
+                convert_bytes_to_compound(&with_u16(&bytes, at, value)).is_none(),
+                "convex child material index {value} (header byte {header}) was accepted"
+            );
+        }
+    }
+}

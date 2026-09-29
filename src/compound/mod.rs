@@ -37,5 +37,4 @@ pub use types::{
     get_compound_mesh, get_compound_sphere, ChildGeometry, ChildShape, CompoundCapsule,
     CompoundCapsuleDef, CompoundData, CompoundDef, CompoundHull, CompoundHullDef, CompoundMesh,
     CompoundMeshDef, CompoundSphere, CompoundSphereDef, COMPOUND_DATA_SIZE, COMPOUND_VERSION,
-    MAX_COMPOUND_MESH_MATERIALS,
 };

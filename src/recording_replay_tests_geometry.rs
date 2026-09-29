@@ -221,3 +221,115 @@ fn shape_geometry_mutator_replay() {
     assert_eq!(single_rec.size(), size);
     assert_eq!(single_rec.data(), rec.data());
 }
+
+/// The compound mesh child addition to the C `AllOps` session: a baked compound whose mesh
+/// child carries five materials, more than the removed `B3_MAX_COMPOUND_MESH_MATERIALS`, so
+/// the packed compound material map rides the recorded geometry blob. The replay world must
+/// rebuild the same compound byte for byte, material map included.
+#[test]
+fn compound_mesh_material_map_round_trip() {
+    use crate::compound::{
+        convert_compound_to_bytes, create_compound, get_compound_child, CompoundDef,
+        CompoundMeshDef, CompoundSphereDef,
+    };
+    use crate::math_functions::TRANSFORM_IDENTITY;
+    use crate::shape::create_baked_compound_shape;
+
+    let comp_sphere = CompoundSphereDef {
+        sphere: Sphere {
+            center: VEC3_ZERO,
+            radius: 1.0,
+        },
+        material: default_surface_material(),
+    };
+
+    // Mesh child with five materials so the compound material map is recorded
+    let compound_mesh_data = create_grid_mesh(1, 5, 1.0, 5, false).expect("grid mesh");
+    assert_eq!(compound_mesh_data.material_count, 5);
+    let compound_mesh_materials = [default_surface_material(); 5];
+    let comp_mesh = CompoundMeshDef {
+        mesh_data: &compound_mesh_data,
+        transform: TRANSFORM_IDENTITY,
+        scale: Vec3 {
+            x: 1.0,
+            y: 1.0,
+            z: 1.0,
+        },
+        materials: &compound_mesh_materials,
+    };
+
+    let compound = create_compound(&CompoundDef {
+        spheres: &[comp_sphere],
+        meshes: &[comp_mesh],
+        ..Default::default()
+    })
+    .expect("compound");
+
+    let mut world = World::new(&default_world_def());
+    world_start_recording(&mut world, Recording::new(0));
+
+    let mut compound_body_def = default_body_def();
+    compound_body_def.type_ = BodyType::Static;
+    let compound_body_id = create_body(&mut world, &compound_body_def);
+    create_baked_compound_shape(
+        &mut world,
+        compound_body_id,
+        &default_shape_def(),
+        &compound,
+    );
+
+    let mut ball_def = default_body_def();
+    ball_def.type_ = BodyType::Dynamic;
+    ball_def.position = Pos {
+        x: 0.5 as _,
+        y: 2.5 as _,
+        z: 2.5 as _,
+    };
+    let ball_id = create_body(&mut world, &ball_def);
+    let mut ball_shape_def = default_shape_def();
+    ball_shape_def.density = 1.0;
+    create_sphere_shape(
+        &mut world,
+        ball_id,
+        &ball_shape_def,
+        &Sphere {
+            center: VEC3_ZERO,
+            radius: 0.25,
+        },
+    );
+
+    for _ in 0..30 {
+        world.step(1.0 / 60.0, 4);
+    }
+
+    let rec = world_stop_recording(&mut world).expect("recording active");
+    assert!(validate_replay(rec.data(), 1));
+
+    let mut player = RecPlayer::create(rec.data(), 1).expect("player");
+    while !player.is_at_end() {
+        player.step_frame();
+    }
+    assert!(!player.has_diverged());
+
+    let replay_world = player.world();
+    let replay_body = player.get_body_id(0);
+    let shapes = body_get_shapes(replay_world, replay_body, 1);
+    assert_eq!(shapes.len(), 1);
+    let replay_index = get_shape(replay_world, shapes[0]);
+    let ShapeGeometry::Compound(replayed) = &replay_world.shapes[replay_index as usize].geometry
+    else {
+        panic!("replayed shape is not a compound");
+    };
+
+    // Child order is capsules, hulls, meshes, spheres: the mesh is child 0.
+    let mesh_child = get_compound_child(replayed, 0);
+    assert_eq!(mesh_child.material_count, 5);
+    assert_eq!(mesh_child.material_indices.len(), 5);
+    assert_eq!(
+        convert_compound_to_bytes(replayed),
+        convert_compound_to_bytes(&compound)
+    );
+
+    drop(world);
+    crate::mesh::destroy_mesh(compound_mesh_data);
+}

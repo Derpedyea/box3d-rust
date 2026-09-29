@@ -490,7 +490,7 @@ fn update_compound_contact(
     // single material. Matches childShapeA setup in b3UpdateContact. The mesh
     // branch keeps the compound materials and builds its own child shape.
     let child_shape_a = if child.shape_type != ShapeType::Mesh {
-        debug_assert!(0 <= material_indices[0] && material_indices[0] < shape_a.material_count());
+        debug_assert!((material_indices[0] as i32) < shape_a.material_count());
         let mut child_shape_a = shape_a.clone();
         child_shape_a.material = shape_a.shape_materials()[material_indices[0] as usize];
         child_shape_a.materials.clear();
@@ -591,7 +591,7 @@ fn update_compound_contact(
                 worker_index,
                 contact_id,
                 &child_shape,
-                Some(&material_indices),
+                Some(material_indices),
                 xf_child,
                 &shape_b,
                 xf_b,

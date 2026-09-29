@@ -3,7 +3,7 @@
 //! SPDX-FileCopyrightText: 2025 Erin Catto
 //! SPDX-License-Identifier: MIT
 
-use super::types::{get_compound_child, ChildGeometry, CompoundData, MAX_COMPOUND_MESH_MATERIALS};
+use super::types::{get_compound_child, ChildGeometry, CompoundData};
 use crate::constants::MAX_SHAPE_CAST_POINTS;
 use crate::distance::{compute_proxy_aabb, make_local_proxy, CastOutput, ShapeProxy, Sweep};
 use crate::dynamic_tree::BoxCastInput;
@@ -13,7 +13,7 @@ use crate::geometry::{
 };
 use crate::hull::{overlap_hull, ray_cast_hull, shape_cast_hull};
 use crate::math_functions::{
-    aabb_transform, inv_rotate_vector, inv_transform_point, make_aabb, min_int, mul_transforms,
+    aabb_transform, inv_rotate_vector, inv_transform_point, make_aabb, mul_transforms,
     rotate_vector, transform_point, Aabb, Transform, VEC3_ZERO,
 };
 use crate::mesh::{overlap_mesh, ray_cast_mesh, shape_cast_mesh};
@@ -91,25 +91,23 @@ pub fn ray_cast_compound(shape: &CompoundData, input: &RayCastInput) -> CastOutp
             let mut output = match child.geometry {
                 ChildGeometry::Capsule(ref capsule) => {
                     let mut o = ray_cast_capsule(capsule, &local_input);
-                    o.material_index = child.material_indices[0];
+                    o.material_index = child.material_indices[0] as i32;
                     o
                 }
                 ChildGeometry::Hull(hull) => {
                     let mut o = ray_cast_hull(hull, &local_input);
-                    o.material_index = child.material_indices[0];
+                    o.material_index = child.material_indices[0] as i32;
                     o
                 }
                 ChildGeometry::Mesh(ref mesh) => {
                     let mut o = ray_cast_mesh(mesh, &local_input);
-                    debug_assert!(0 <= o.material_index);
-                    let child_material_index =
-                        min_int(o.material_index, MAX_COMPOUND_MESH_MATERIALS as i32 - 1);
-                    o.material_index = child.material_indices[child_material_index as usize];
+                    debug_assert!(0 <= o.material_index && o.material_index < child.material_count);
+                    o.material_index = child.material_indices[o.material_index as usize] as i32;
                     o
                 }
                 ChildGeometry::Sphere(ref sphere) => {
                     let mut o = ray_cast_sphere(sphere, &local_input);
-                    o.material_index = child.material_indices[0];
+                    o.material_index = child.material_indices[0] as i32;
                     o
                 }
             };
@@ -165,25 +163,23 @@ pub fn shape_cast_compound(shape: &CompoundData, input: &ShapeCastInput) -> Cast
             let mut output = match child.geometry {
                 ChildGeometry::Capsule(ref capsule) => {
                     let mut o = shape_cast_capsule(capsule, &local_input);
-                    o.material_index = child.material_indices[0];
+                    o.material_index = child.material_indices[0] as i32;
                     o
                 }
                 ChildGeometry::Hull(hull) => {
                     let mut o = shape_cast_hull(hull, &local_input);
-                    o.material_index = child.material_indices[0];
+                    o.material_index = child.material_indices[0] as i32;
                     o
                 }
                 ChildGeometry::Mesh(ref mesh) => {
                     let mut o = shape_cast_mesh(mesh, &local_input);
-                    debug_assert!(0 <= o.material_index);
-                    let child_material_index =
-                        min_int(o.material_index, MAX_COMPOUND_MESH_MATERIALS as i32 - 1);
-                    o.material_index = child.material_indices[child_material_index as usize];
+                    debug_assert!(0 <= o.material_index && o.material_index < child.material_count);
+                    o.material_index = child.material_indices[o.material_index as usize] as i32;
                     o
                 }
                 ChildGeometry::Sphere(ref sphere) => {
                     let mut o = shape_cast_sphere(sphere, &local_input);
-                    o.material_index = child.material_indices[0];
+                    o.material_index = child.material_indices[0] as i32;
                     o
                 }
             };

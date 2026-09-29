@@ -3,12 +3,12 @@
 //! SPDX-FileCopyrightText: 2025 Erin Catto
 //! SPDX-License-Identifier: MIT
 
-use super::types::{get_compound_child, ChildGeometry, CompoundData, MAX_COMPOUND_MESH_MATERIALS};
+use super::types::{get_compound_child, ChildGeometry, CompoundData};
 use crate::dynamic_tree::DEFAULT_MASK_BITS;
 use crate::geometry::{collide_mover_and_capsule, collide_mover_and_sphere, Capsule, PlaneResult};
 use crate::hull::collide_mover_and_hull;
 use crate::math_functions::{
-    add, inv_transform_point, max, min, min_int, rotate_vector, sub, transform_point, Aabb, Vec3,
+    add, inv_transform_point, max, min, rotate_vector, sub, transform_point, Aabb, Vec3,
 };
 use crate::mesh::collide_mover_and_mesh;
 
@@ -87,9 +87,8 @@ pub fn collide_mover_and_compound(
                 p.point = transform_point(child.transform, p.point);
 
                 p.child_index = child_index;
-                let child_material_index =
-                    min_int(p.material_index, MAX_COMPOUND_MESH_MATERIALS as i32 - 1);
-                p.material_index = child.material_indices[child_material_index as usize];
+                debug_assert!(0 <= p.material_index && p.material_index < child.material_count);
+                p.material_index = child.material_indices[p.material_index as usize] as i32;
             }
 
             plane_count += added;

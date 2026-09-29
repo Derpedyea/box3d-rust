@@ -197,7 +197,7 @@ fn compound_material_distinct() {
     let mats = get_compound_materials(&c);
     for i in 0..3 {
         let cc = get_compound_capsule(&c, i);
-        assert!((0..3).contains(&cc.material_index));
+        assert!(cc.material_index < 3);
         assert_eq!(
             mats[cc.material_index as usize].user_material_id,
             (i + 1) as u64

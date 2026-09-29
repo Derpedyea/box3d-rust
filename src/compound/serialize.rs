@@ -7,12 +7,15 @@
 
 use super::types::{
     CompoundCapsule, CompoundData, CompoundSphere, HullInstance, MeshInstance, COMPOUND_DATA_SIZE,
-    COMPOUND_TREE_OFFSET, MAX_COMPOUND_MESH_MATERIALS,
+    COMPOUND_TREE_OFFSET,
 };
 use crate::dynamic_tree::{write_tree_header, write_tree_node, write_tree_proxy};
 use crate::math_functions::{Quat, Transform, Vec3};
 
 fn write_u64(buf: &mut Vec<u8>, v: u64) {
+    buf.extend_from_slice(&v.to_le_bytes());
+}
+fn write_u16(buf: &mut Vec<u8>, v: u16) {
     buf.extend_from_slice(&v.to_le_bytes());
 }
 fn write_u32(buf: &mut Vec<u8>, v: u32) {
@@ -72,27 +75,44 @@ fn write_capsule(buf: &mut Vec<u8>, c: &CompoundCapsule) {
     write_vec3(buf, c.capsule.center1);
     write_vec3(buf, c.capsule.center2);
     write_f32(buf, c.capsule.radius);
-    write_i32(buf, c.material_index);
+    write_u16(buf, c.material_index);
+    write_u16(buf, c.padding);
 }
 
 fn write_sphere(buf: &mut Vec<u8>, s: &CompoundSphere) {
     write_vec3(buf, s.sphere.center);
     write_f32(buf, s.sphere.radius);
-    write_i32(buf, s.material_index);
+    write_u16(buf, s.material_index);
+    write_u16(buf, s.padding);
 }
 
 fn write_hull_instance(buf: &mut Vec<u8>, h: &HullInstance) {
     write_transform(buf, h.transform);
     write_u32(buf, h.hull_offset);
-    write_u32(buf, h.material_index);
+    write_u16(buf, h.material_index);
+    write_u16(buf, h.padding);
 }
 
 fn write_mesh_instance(buf: &mut Vec<u8>, m: &MeshInstance) {
     write_transform(buf, m.transform);
     write_vec3(buf, m.scale);
     write_u32(buf, m.mesh_offset);
-    for i in 0..MAX_COMPOUND_MESH_MATERIALS {
-        write_u32(buf, m.material_indices[i]);
+    write_u32(buf, m.material_offset);
+    write_u32(buf, m.material_count);
+}
+
+/// Write one mesh instance's run of the packed material map at its recorded blob offset.
+/// Writing in place (rather than appending) keeps the output faithful to the recorded
+/// offsets regardless of instance order.
+fn write_mesh_materials(buf: &mut Vec<u8>, m: &MeshInstance, map: &[u16]) {
+    let start = m.material_start as usize;
+    let count = m.material_count as usize;
+    let offset = m.material_offset as usize;
+    let end = offset + count * core::mem::size_of::<u16>();
+    pad_to(buf, end);
+    for (k, index) in map[start..start + count].iter().enumerate() {
+        let o = offset + k * core::mem::size_of::<u16>();
+        buf[o..o + 2].copy_from_slice(&index.to_le_bytes());
     }
 }
 
@@ -143,6 +163,10 @@ impl CompoundData {
         pad_to(&mut buf, self.mesh_offset as usize);
         for inst in &self.mesh_instances {
             write_mesh_instance(&mut buf, inst);
+        }
+        // Packed mesh material map
+        for inst in &self.mesh_instances {
+            write_mesh_materials(&mut buf, inst, &self.mesh_material_map);
         }
         for (i, mesh) in self.shared_meshes.iter().enumerate() {
             let offset = self

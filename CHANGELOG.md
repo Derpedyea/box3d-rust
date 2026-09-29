@@ -17,6 +17,7 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
 - `79fc559` Optimizations (#168)
 - `8fda30e` (samples only, nothing to port)
 - `adec25b` SAT optimizations (#170)
+- `5643cd8` Remove compound mesh child material limit (#172)
 
 ### Breaking
 
@@ -147,6 +148,20 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
   `WorldEnableRestitutionPropagation`. The world snapshot version advances to
   10: the world config stores `restitution_iterations` and the restitution
   propagation flag (bit `0x10`). Older snapshots are rejected.
+- Compound mesh children no longer have a material limit (upstream
+  `5643cd8`). `MAX_COMPOUND_MESH_MATERIALS` is removed. `CompoundCapsule`,
+  `CompoundHull`, and `CompoundSphere` carry a `u16` `material_index` plus a
+  `u16` `padding` field (was `i32`). `CompoundMesh::material_indices` and
+  `ChildShape::material_indices` are now `&[u16]` slices into the compound
+  with a `material_count` field (was a fixed `[i32; 4]`), and
+  `compute_mesh_manifolds` takes its material map as `Option<&[u16]>`.
+- The baked compound blob layout changes (upstream `5643cd8`): the convex
+  child and hull instance material indices are `u16` + padding, mesh
+  instances store a `material_offset` / `material_count` pair (60 -> 52
+  bytes) into a packed `u16` mesh material map stored after the mesh
+  instance array, and `COMPOUND_VERSION` changes (seed
+  `0x7A2F41C9E6D0B358`). Baked compounds from earlier versions no longer
+  load.
 
 ### Changed
 
@@ -315,6 +330,20 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
   rotated bodies report correct overlaps (upstream `954cf87`). The compound
   shape cast builds the child-local input with `make_local_proxy` and
   `inv_rotate_vector` and keeps `can_encroach`.
+- The compound sphere array now uses the C `b3CompoundSphere` stride of 20
+  bytes (it used the 32 byte capsule stride), so compounds with more than one
+  sphere child round-trip through `convert_compound_to_bytes` /
+  `convert_bytes_to_compound` and the blob is byte-identical to C.
+- Casts, mover collision, contacts, and `get_shape_user_material_id` on a
+  compound mesh child with more than four materials now resolve the
+  triangle's own material instead of clamping to the fourth (upstream
+  `5643cd8`).
+- `convert_bytes_to_compound` rejects (returns `None`) blobs whose mesh
+  material runs fall outside the packed map section, whose mesh instances
+  have fewer map entries than their mesh's materials, or whose map entries
+  or convex child material indices fall outside the compound material
+  table, so corrupt compounds fail the conversion instead of panicking in
+  casts, mover collision, or contacts. C trusts the blob here.
 
 ### Added
 
@@ -372,6 +401,9 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
 - Ported upstream `f555ee4` tests: `test_dynamic_tree.c` (8), world
   `TestCompoundShapeCount` and the reworked `TestEnlargedProxyDestroyed`
   (`CountMovedNodes`), and the compound tree asserts.
+- Ported upstream `5643cd8` tests: compound `CompoundMeshManyMaterials` and
+  `CompoundMeshContactMaterial`, and the five-material compound mesh child
+  addition to the recording `AllOps` session (as a focused round-trip test).
 
 ## 0.3.0
 

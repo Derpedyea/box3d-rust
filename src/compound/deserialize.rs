@@ -14,8 +14,8 @@
 
 use super::types::{
     CompoundCapsule, CompoundData, CompoundSphere, HullInstance, MeshInstance,
-    COMPOUND_CONVEX_SIZE, COMPOUND_DATA_SIZE, COMPOUND_TREE_OFFSET, COMPOUND_VERSION,
-    HULL_INSTANCE_SIZE, MAX_COMPOUND_MESH_MATERIALS, MESH_INSTANCE_SIZE,
+    COMPOUND_CAPSULE_SIZE, COMPOUND_DATA_SIZE, COMPOUND_SPHERE_SIZE, COMPOUND_TREE_OFFSET,
+    COMPOUND_VERSION, HULL_INSTANCE_SIZE, MESH_INSTANCE_SIZE,
 };
 use crate::dynamic_tree::{
     read_tree_header, read_tree_node, read_tree_proxy, DynamicTree, DYNAMIC_TREE_SIZE,
@@ -28,6 +28,9 @@ use crate::mesh::{convert_bytes_to_mesh, MESH_BYTE_COUNT_OFFSET, MESH_DATA_SIZE}
 
 fn read_u64(buf: &[u8], o: usize) -> u64 {
     u64::from_le_bytes(buf[o..o + 8].try_into().unwrap())
+}
+fn read_u16(buf: &[u8], o: usize) -> u16 {
+    u16::from_le_bytes(buf[o..o + 2].try_into().unwrap())
 }
 fn read_u32(buf: &[u8], o: usize) -> u32 {
     u32::from_le_bytes(buf[o..o + 4].try_into().unwrap())
@@ -202,20 +205,29 @@ pub fn convert_bytes_to_compound(bytes: &[u8]) -> Option<CompoundData> {
     let coff = section_offset(
         capsule_offset,
         capsule_count,
-        COMPOUND_CONVEX_SIZE,
+        COMPOUND_CAPSULE_SIZE,
         bytes.len(),
     )?;
     let mut capsules = Vec::with_capacity(capsule_count as usize);
     for i in 0..capsule_count as usize {
-        let o = coff + i * COMPOUND_CONVEX_SIZE;
+        let o = coff + i * COMPOUND_CAPSULE_SIZE;
         capsules.push(CompoundCapsule {
             capsule: crate::geometry::Capsule {
                 center1: read_vec3(bytes, o),
                 center2: read_vec3(bytes, o + 12),
                 radius: read_f32(bytes, o + 24),
             },
-            material_index: read_i32(bytes, o + 28),
+            material_index: read_u16(bytes, o + 28),
+            padding: read_u16(bytes, o + 30),
         });
+    }
+    // Divergence from C: reject a material index outside the compound material table (see
+    // the mesh material map below).
+    if capsules
+        .iter()
+        .any(|c| c.material_index as i32 >= material_count)
+    {
+        return None;
     }
 
     let hoff = section_offset(hull_offset, hull_count, HULL_INSTANCE_SIZE, bytes.len())?;
@@ -225,12 +237,20 @@ pub fn convert_bytes_to_compound(bytes: &[u8]) -> Option<CompoundData> {
         hull_instances.push(HullInstance {
             transform: read_transform(bytes, o),
             shared_index: 0, // fixed up below
-            material_index: read_u32(bytes, o + 32),
+            material_index: read_u16(bytes, o + 32),
+            padding: read_u16(bytes, o + 34),
             hull_offset: read_u32(bytes, o + 28),
         });
     }
 
     // Collect unique hull offsets in first-seen order to rebuild shared_hulls
+    if hull_instances
+        .iter()
+        .any(|h| h.material_index as i32 >= material_count)
+    {
+        return None;
+    }
+
     let mut shared_hulls = Vec::new();
     let mut offset_to_shared: Vec<(u32, usize)> = Vec::new();
     for inst in &mut hull_instances {
@@ -260,15 +280,13 @@ pub fn convert_bytes_to_compound(bytes: &[u8]) -> Option<CompoundData> {
     let mut mesh_instances = Vec::with_capacity(mesh_count as usize);
     for i in 0..mesh_count as usize {
         let o = mioff + i * MESH_INSTANCE_SIZE;
-        let mut material_indices = [0u32; MAX_COMPOUND_MESH_MATERIALS];
-        for j in 0..MAX_COMPOUND_MESH_MATERIALS {
-            material_indices[j] = read_u32(bytes, o + 44 + j * 4);
-        }
         mesh_instances.push(MeshInstance {
             transform: read_transform(bytes, o),
             scale: read_vec3(bytes, o + 28),
             shared_index: 0,
-            material_indices,
+            material_offset: read_u32(bytes, o + 44),
+            material_count: read_u32(bytes, o + 48),
+            material_start: 0, // fixed up below
             mesh_offset: read_u32(bytes, o + 40),
         });
     }
@@ -298,22 +316,72 @@ pub fn convert_bytes_to_compound(bytes: &[u8]) -> Option<CompoundData> {
         return None;
     }
 
+    // Packed mesh material map. C points each instance at its run by adding materialOffset
+    // to the blob address; the port copies the runs into an owned array.
+    //
+    // Divergence from C: C trusts the blob. The port requires each run to lie inside the map
+    // section, which starts after the mesh instance array and ends at the first shared mesh
+    // blob. It also requires each run to cover every triangle material of its mesh (and at
+    // least the mesh material count) and each entry to index the compound material table.
+    // Those indices are used as slice indexes by the casts, mover, contacts, and
+    // get_shape_user_material_id, so a corrupt blob fails the conversion here instead of
+    // panicking there. Well-formed blobs always pass.
+    let map_section_start = mioff + mesh_count as usize * MESH_INSTANCE_SIZE;
+    let map_section_end = mesh_instances
+        .iter()
+        .map(|inst| inst.mesh_offset as usize)
+        .min()
+        .unwrap_or(map_section_start);
+    let mut mesh_material_map: Vec<u16> = Vec::new();
+    for inst in &mut mesh_instances {
+        let count = inst.material_count as usize;
+        let start = inst.material_offset as usize;
+        let end = start.checked_add(count.checked_mul(core::mem::size_of::<u16>())?)?;
+        if start < map_section_start || end > map_section_end || end > bytes.len() {
+            return None;
+        }
+
+        let mesh = &shared_meshes[inst.shared_index as usize];
+        if (count as u64) < mesh.material_count as u64 {
+            return None;
+        }
+        if mesh.material_indices.iter().any(|&m| m as usize >= count) {
+            return None;
+        }
+
+        inst.material_start = mesh_material_map.len() as u32;
+        for k in 0..count {
+            let index = read_u16(bytes, start + k * core::mem::size_of::<u16>());
+            if index as i32 >= material_count {
+                return None;
+            }
+            mesh_material_map.push(index);
+        }
+    }
+
     let soff = section_offset(
         sphere_offset,
         sphere_count,
-        COMPOUND_CONVEX_SIZE,
+        COMPOUND_SPHERE_SIZE,
         bytes.len(),
     )?;
     let mut spheres = Vec::with_capacity(sphere_count as usize);
     for i in 0..sphere_count as usize {
-        let o = soff + i * COMPOUND_CONVEX_SIZE;
+        let o = soff + i * COMPOUND_SPHERE_SIZE;
         spheres.push(CompoundSphere {
             sphere: crate::geometry::Sphere {
                 center: read_vec3(bytes, o),
                 radius: read_f32(bytes, o + 12),
             },
-            material_index: read_i32(bytes, o + 16),
+            material_index: read_u16(bytes, o + 16),
+            padding: read_u16(bytes, o + 18),
         });
+    }
+    if spheres
+        .iter()
+        .any(|s| s.material_index as i32 >= material_count)
+    {
+        return None;
     }
 
     Some(CompoundData {
@@ -339,6 +407,7 @@ pub fn convert_bytes_to_compound(bytes: &[u8]) -> Option<CompoundData> {
         hull_instances,
         shared_hulls,
         mesh_instances,
+        mesh_material_map,
         shared_meshes,
         spheres,
     })

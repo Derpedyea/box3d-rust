@@ -170,7 +170,7 @@ impl Shape {
     /// presents at least the inline material, so that guard has no
     /// equivalent here.
     pub fn get_shape_user_material_id(&self, child_index: i32, triangle_index: i32) -> u64 {
-        use crate::compound::{get_compound_child, ChildGeometry, MAX_COMPOUND_MESH_MATERIALS};
+        use crate::compound::{get_compound_child, ChildGeometry};
         use crate::height_field::get_height_field_material;
         use crate::math_functions::clamp_int;
         use crate::mesh::get_mesh_material_indices;
@@ -195,14 +195,12 @@ impl Shape {
                     } else {
                         0
                     };
-                    let mesh_material_index = clamp_int(
-                        mesh_material_index,
-                        0,
-                        MAX_COMPOUND_MESH_MATERIALS as i32 - 1,
+                    debug_assert!(
+                        0 <= mesh_material_index && mesh_material_index < child.material_count
                     );
-                    material_index = child.material_indices[mesh_material_index as usize];
+                    material_index = child.material_indices[mesh_material_index as usize] as i32;
                 } else {
-                    material_index = child.material_indices[0];
+                    material_index = child.material_indices[0] as i32;
                 }
             }
             _ => {}

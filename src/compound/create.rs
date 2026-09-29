@@ -7,8 +7,8 @@
 
 use super::types::{
     CompoundCapsule, CompoundData, CompoundDef, CompoundSphere, HullInstance, MeshInstance,
-    COMPOUND_CONVEX_SIZE, COMPOUND_DATA_SIZE, COMPOUND_VERSION, HULL_INSTANCE_SIZE,
-    MAX_COMPOUND_MESH_MATERIALS, MESH_INSTANCE_SIZE,
+    COMPOUND_CAPSULE_SIZE, COMPOUND_DATA_SIZE, COMPOUND_SPHERE_SIZE, COMPOUND_VERSION,
+    HULL_INSTANCE_SIZE, MESH_INSTANCE_SIZE,
 };
 use crate::constants::MAX_CHILD_SHAPES;
 use crate::core::NULL_INDEX;
@@ -17,7 +17,7 @@ use crate::geometry::{
     compute_capsule_aabb, compute_sphere_aabb, SurfaceMaterial, SURFACE_MATERIAL_SIZE,
 };
 use crate::hull::{compare_hull_data, compute_hull_aabb, HullData};
-use crate::math_functions::{align_up8, min_int, TRANSFORM_IDENTITY};
+use crate::math_functions::{align_up8, TRANSFORM_IDENTITY};
 use crate::mesh::{compute_mesh_aabb, MeshData};
 
 struct SharedHull {
@@ -77,6 +77,7 @@ pub fn create_compound(def: &CompoundDef<'_>) -> Option<CompoundData> {
             transform: TRANSFORM_IDENTITY,
             shared_index: 0,
             material_index: 0,
+            padding: 0,
             hull_offset: 0,
         };
         hull_count as usize
@@ -86,7 +87,9 @@ pub fn create_compound(def: &CompoundDef<'_>) -> Option<CompoundData> {
             transform: TRANSFORM_IDENTITY,
             scale: crate::math_functions::VEC3_ONE,
             shared_index: 0,
-            material_indices: [0; MAX_COMPOUND_MESH_MATERIALS],
+            material_offset: 0,
+            material_count: 0,
+            material_start: 0,
             mesh_offset: 0,
         };
         mesh_count as usize
@@ -101,10 +104,14 @@ pub fn create_compound(def: &CompoundDef<'_>) -> Option<CompoundData> {
 
     let mut materials: Vec<SurfaceMaterial> = Vec::with_capacity(material_capacity.max(0) as usize);
 
+    let mesh_material_total = material_capacity - convex_count;
+    let mut mesh_material_staging = vec![0u16; mesh_material_total as usize];
+    let mut mesh_material_cursor = 0i32;
+
     for (i, capsule_def) in def.capsules.iter().enumerate() {
         capsule_instances[i].capsule = capsule_def.capsule;
         let material_index = get_or_insert_material(&mut materials, &capsule_def.material);
-        capsule_instances[i].material_index = material_index;
+        capsule_instances[i].material_index = material_index as u16;
 
         let aabb = compute_capsule_aabb(&capsule_def.capsule, TRANSFORM_IDENTITY);
         tree.create_proxy(aabb, !0u64, child_index as u64);
@@ -120,7 +127,7 @@ pub fn create_compound(def: &CompoundDef<'_>) -> Option<CompoundData> {
         child_index += 1;
 
         let material_index = get_or_insert_material(&mut materials, &hull_def.material);
-        hull_instances[i].material_index = material_index as u32;
+        hull_instances[i].material_index = material_index as u16;
         hull_instances[i].transform = hull_def.transform;
 
         let shared_index = if let Some(idx) = shared_hulls
@@ -152,17 +159,13 @@ pub fn create_compound(def: &CompoundDef<'_>) -> Option<CompoundData> {
         // No effort to share mesh materials. It would be easier to do if the number of materials was limited.
         debug_assert_eq!(mesh_data.material_count as usize, mesh_def.materials.len());
 
-        let mesh_material_count = min_int(
-            mesh_def.materials.len() as i32,
-            MAX_COMPOUND_MESH_MATERIALS as i32,
-        );
+        let mesh_material_start = mesh_material_cursor;
 
-        for (j, mat) in mesh_def.materials[..mesh_material_count as usize]
-            .iter()
-            .enumerate()
-        {
+        for mat in mesh_def.materials {
+            // Get the shared material index.
             let material_index = get_or_insert_material(&mut materials, mat);
-            mesh_instances[i].material_indices[j] = material_index as u32;
+            mesh_material_staging[mesh_material_cursor as usize] = material_index as u16;
+            mesh_material_cursor += 1;
         }
 
         let shared_index = if let Some(idx) = shared_meshes
@@ -181,6 +184,10 @@ pub fn create_compound(def: &CompoundDef<'_>) -> Option<CompoundData> {
 
         mesh_instances[i].transform = mesh_def.transform;
         mesh_instances[i].scale = mesh_def.scale;
+
+        mesh_instances[i].material_offset = mesh_material_start as u32;
+        mesh_instances[i].material_count = mesh_def.materials.len() as u32;
+        mesh_instances[i].material_start = mesh_material_start as u32;
         mesh_instances[i].shared_index = shared_index as u32;
         mesh_instances[i].mesh_offset = shared_index as u32;
     }
@@ -188,7 +195,7 @@ pub fn create_compound(def: &CompoundDef<'_>) -> Option<CompoundData> {
     for (i, sphere_def) in def.spheres.iter().enumerate() {
         sphere_instances[i].sphere = sphere_def.sphere;
         let material_index = get_or_insert_material(&mut materials, &sphere_def.material);
-        sphere_instances[i].material_index = material_index;
+        sphere_instances[i].material_index = material_index as u16;
 
         let aabb = compute_sphere_aabb(&sphere_def.sphere, TRANSFORM_IDENTITY);
         tree.create_proxy(aabb, !0u64, child_index as u64);
@@ -197,6 +204,7 @@ pub fn create_compound(def: &CompoundDef<'_>) -> Option<CompoundData> {
 
     let material_count = materials.len() as i32;
     debug_assert!(material_count <= material_capacity);
+    debug_assert!(material_count <= u16::MAX as i32);
     debug_assert!(tree.proxy_count() > 0);
 
     tree.rebuild(true);
@@ -216,7 +224,7 @@ pub fn create_compound(def: &CompoundDef<'_>) -> Option<CompoundData> {
     byte_count += align_up8(material_count as usize * SURFACE_MATERIAL_SIZE);
 
     let capsule_offset = byte_count as i32;
-    byte_count += align_up8(capsule_count as usize * COMPOUND_CONVEX_SIZE);
+    byte_count += align_up8(capsule_count as usize * COMPOUND_CAPSULE_SIZE);
 
     let hull_array_offset = byte_count as i32;
     byte_count += align_up8(hull_count as usize * HULL_INSTANCE_SIZE);
@@ -229,13 +237,16 @@ pub fn create_compound(def: &CompoundDef<'_>) -> Option<CompoundData> {
     let mesh_array_offset = byte_count as i32;
     byte_count += align_up8(mesh_count as usize * MESH_INSTANCE_SIZE);
 
+    let mesh_material_map_offset = byte_count as i32;
+    byte_count += align_up8(mesh_material_total as usize * core::mem::size_of::<u16>());
+
     for shared in &mut shared_meshes {
         shared.mesh_offset = byte_count as i32;
         byte_count += align_up8(shared.mesh_data.byte_count as usize);
     }
 
     let sphere_offset = byte_count as i32;
-    byte_count += align_up8(sphere_count as usize * COMPOUND_CONVEX_SIZE);
+    byte_count += align_up8(sphere_count as usize * COMPOUND_SPHERE_SIZE);
 
     // Fix up hull/mesh instance offsets to absolute blob offsets (C does this
     // before memcpy into the compound).
@@ -248,6 +259,10 @@ pub fn create_compound(def: &CompoundDef<'_>) -> Option<CompoundData> {
         let shared_index = inst.mesh_offset as usize;
         debug_assert!(shared_index < shared_meshes.len());
         inst.mesh_offset = shared_meshes[shared_index].mesh_offset as u32;
+
+        let material_start = inst.material_offset;
+        inst.material_offset =
+            mesh_material_map_offset as u32 + material_start * core::mem::size_of::<u16>() as u32;
     }
 
     // Immutable tree. C copies the tree struct into the blob and then fixes it up
@@ -293,6 +308,7 @@ pub fn create_compound(def: &CompoundDef<'_>) -> Option<CompoundData> {
         hull_instances,
         shared_hulls: shared_hulls.into_iter().map(|s| s.hull).collect(),
         mesh_instances,
+        mesh_material_map: mesh_material_staging,
         shared_meshes: shared_meshes.into_iter().map(|s| s.mesh_data).collect(),
         spheres: sphere_instances,
     })

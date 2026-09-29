@@ -15,11 +15,7 @@ use crate::mesh::{Mesh, MeshData, MESH_VERSION};
 /// The baked compound version depends on the tree, mesh, and hull versions.
 /// (B3_COMPOUND_VERSION)
 pub const COMPOUND_VERSION: u64 =
-    0xB11D_CE70_FAD5_622Bu64 ^ DYNAMIC_TREE_VERSION ^ MESH_VERSION ^ HULL_VERSION;
-
-/// Meshes used in compounds have limited space for materials.
-/// (B3_MAX_COMPOUND_MESH_MATERIALS)
-pub const MAX_COMPOUND_MESH_MATERIALS: usize = 4;
+    0x7A2F_41C9_E6D0_B358u64 ^ DYNAMIC_TREE_VERSION ^ MESH_VERSION ^ HULL_VERSION;
 
 /// Size of the C `b3CompoundData` header on 64-bit (MSVC/GCC): version, byteCount,
 /// nodeOffset, proxyOffset, 4 bytes of padding, the 112 byte `b3DynamicTree`, then the 12
@@ -29,14 +25,21 @@ pub const COMPOUND_DATA_SIZE: usize = 184;
 /// Byte offset of the embedded `b3DynamicTree` inside the `b3CompoundData` header.
 pub const COMPOUND_TREE_OFFSET: usize = 24;
 
-/// Size of the C `b3HullInstance`.
+/// Size of the C `b3HullInstance`: transform, hullOffset, then the `uint16_t`
+/// materialIndex and padding.
 pub const HULL_INSTANCE_SIZE: usize = 36;
 
-/// Size of the C `b3MeshInstance`.
-pub const MESH_INSTANCE_SIZE: usize = 60;
+/// Size of the C `b3MeshInstance`: transform, scale, meshOffset, materialOffset,
+/// materialCount.
+pub const MESH_INSTANCE_SIZE: usize = 52;
 
-/// Size of the C `b3CompoundCapsule` / `b3CompoundSphere`.
-pub const COMPOUND_CONVEX_SIZE: usize = 32;
+/// Size of the C `b3CompoundCapsule`: the 28 byte `b3Capsule` plus the `uint16_t`
+/// materialIndex and padding.
+pub const COMPOUND_CAPSULE_SIZE: usize = 32;
+
+/// Size of the C `b3CompoundSphere`: the 16 byte `b3Sphere` plus the `uint16_t`
+/// materialIndex and padding.
+pub const COMPOUND_SPHERE_SIZE: usize = 20;
 
 /// Definition for a capsule in a compound shape. (b3CompoundCapsuleDef)
 #[derive(Debug, Clone, Copy)]
@@ -82,7 +85,12 @@ pub struct CompoundDef<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct CompoundCapsule {
     pub capsule: Capsule,
-    pub material_index: i32,
+
+    /// Index to a shared material.
+    pub material_index: u16,
+
+    /// Padding for determinism.
+    pub padding: u16,
 }
 
 /// A hull that lives in a compound. (b3CompoundHull)
@@ -90,7 +98,12 @@ pub struct CompoundCapsule {
 pub struct CompoundHull<'a> {
     pub hull: &'a HullData,
     pub transform: Transform,
-    pub material_index: i32,
+
+    /// Index to a shared material.
+    pub material_index: u16,
+
+    /// Padding for determinism.
+    pub padding: u16,
 }
 
 /// A mesh with non-uniform scale that lives in a compound. (b3CompoundMesh)
@@ -99,14 +112,26 @@ pub struct CompoundMesh<'a> {
     pub mesh_data: &'a MeshData,
     pub transform: Transform,
     pub scale: Vec3,
-    pub material_indices: [i32; MAX_COMPOUND_MESH_MATERIALS],
+
+    /// This is used to access the surface material from [`get_compound_materials`].
+    /// Requires an extra level of indirection.
+    /// `material_index = material_indices[triangle.material_index]`
+    pub material_indices: &'a [u16],
+
+    /// The number of materials. 1 for convex hapes.
+    pub material_count: i32,
 }
 
 /// A sphere that lives in a compound. (b3CompoundSphere)
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct CompoundSphere {
     pub sphere: Sphere,
-    pub material_index: i32,
+
+    /// Index to a shared material.
+    pub material_index: u16,
+
+    /// Padding for determinism.
+    pub padding: u16,
 }
 
 /// Internal hull instance stored in the compound (offset resolved at create).
@@ -115,7 +140,8 @@ pub(crate) struct HullInstance {
     pub transform: Transform,
     /// Index into [`CompoundData::shared_hulls`].
     pub shared_index: u32,
-    pub material_index: u32,
+    pub material_index: u16,
+    pub padding: u16,
     /// Byte offset into the serialized blob (for to_bytes parity).
     pub hull_offset: u32,
 }
@@ -127,7 +153,14 @@ pub(crate) struct MeshInstance {
     pub scale: Vec3,
     /// Index into [`CompoundData::shared_meshes`].
     pub shared_index: u32,
-    pub material_indices: [u32; MAX_COMPOUND_MESH_MATERIALS],
+    /// Byte offset of this instance's run of `uint16_t` material indices in the serialized
+    /// blob's packed mesh material map (C `materialOffset`).
+    pub material_offset: u32,
+    pub material_count: u32,
+    /// Index of the same run in [`CompoundData::mesh_material_map`]. C reaches the run by
+    /// adding `material_offset` to the blob address; the port keeps the map as an owned
+    /// array, so it stores the element index alongside the byte offset.
+    pub material_start: u32,
     /// Byte offset into the serialized blob (for to_bytes parity).
     pub mesh_offset: u32,
 }
@@ -146,7 +179,14 @@ pub enum ChildGeometry<'a> {
 pub struct ChildShape<'a> {
     pub geometry: ChildGeometry<'a>,
     pub transform: Transform,
-    pub material_indices: [i32; MAX_COMPOUND_MESH_MATERIALS],
+
+    /// Material indices. Index 0 is used for convex shapes.
+    pub material_indices: &'a [u16],
+
+    /// The number of materials. This is one for convex shapes. For
+    /// meshes it is determined by the maximum triangle material index.
+    pub material_count: i32,
+
     pub shape_type: ShapeType,
 }
 
@@ -182,6 +222,9 @@ pub struct CompoundData {
     pub(crate) hull_instances: Vec<HullInstance>,
     pub shared_hulls: Vec<HullData>,
     pub(crate) mesh_instances: Vec<MeshInstance>,
+    /// Packed `uint16_t` compound material indices for all mesh children, stored in the
+    /// blob right after the mesh instance array.
+    pub(crate) mesh_material_map: Vec<u16>,
     pub shared_meshes: Vec<MeshData>,
     pub spheres: Vec<CompoundSphere>,
 }
@@ -211,6 +254,7 @@ impl Default for CompoundData {
             hull_instances: Vec::new(),
             shared_hulls: Vec::new(),
             mesh_instances: Vec::new(),
+            mesh_material_map: Vec::new(),
             shared_meshes: Vec::new(),
             spheres: Vec::new(),
         }
@@ -242,13 +286,15 @@ pub fn get_compound_hull(compound: &CompoundData, index: i32) -> CompoundHull<'_
             hull: &compound.shared_hulls[0],
             transform: TRANSFORM_IDENTITY,
             material_index: 0,
+            padding: 0,
         };
     }
     let inst = &compound.hull_instances[index as usize];
     CompoundHull {
         hull: &compound.shared_hulls[inst.shared_index as usize],
         transform: inst.transform,
-        material_index: inst.material_index as i32,
+        material_index: inst.material_index,
+        padding: 0,
     }
 }
 
@@ -260,19 +306,19 @@ pub fn get_compound_mesh(compound: &CompoundData, index: i32) -> CompoundMesh<'_
             mesh_data: &compound.shared_meshes[0],
             transform: TRANSFORM_IDENTITY,
             scale: VEC3_ONE,
-            material_indices: [0; MAX_COMPOUND_MESH_MATERIALS],
+            material_indices: &[],
+            material_count: 0,
         };
     }
     let inst = &compound.mesh_instances[index as usize];
-    let mut material_indices = [0i32; MAX_COMPOUND_MESH_MATERIALS];
-    for i in 0..MAX_COMPOUND_MESH_MATERIALS {
-        material_indices[i] = inst.material_indices[i] as i32;
-    }
+    let start = inst.material_start as usize;
+    let count = inst.material_count as usize;
     CompoundMesh {
         mesh_data: &compound.shared_meshes[inst.shared_index as usize],
         transform: inst.transform,
         scale: inst.scale,
-        material_indices,
+        material_indices: &compound.mesh_material_map[start..start + count],
+        material_count: inst.material_count as i32,
     }
 }
 
@@ -287,14 +333,19 @@ pub fn get_compound_sphere(compound: &CompoundData, index: i32) -> CompoundSpher
 
 /// Child shape by flat index (capsules → hulls → meshes → spheres).
 /// (b3GetCompoundChild)
+///
+/// The returned material indices reference the compound's own storage, like the C
+/// pointers into the blob.
 pub fn get_compound_child(compound: &CompoundData, mut child_index: i32) -> ChildShape<'_> {
     // Capsule?
     if 0 <= child_index && child_index < compound.capsule_count {
-        let compound_capsule = get_compound_capsule(compound, child_index);
+        debug_assert!(compound.capsule_offset > 0);
+        let capsule = &compound.capsules[child_index as usize];
         return ChildShape {
-            geometry: ChildGeometry::Capsule(compound_capsule.capsule),
+            geometry: ChildGeometry::Capsule(capsule.capsule),
             transform: TRANSFORM_IDENTITY,
-            material_indices: [compound_capsule.material_index, 0, 0, 0],
+            material_indices: core::slice::from_ref(&capsule.material_index),
+            material_count: 1,
             shape_type: ShapeType::Capsule,
         };
     }
@@ -302,11 +353,13 @@ pub fn get_compound_child(compound: &CompoundData, mut child_index: i32) -> Chil
 
     // Hull?
     if 0 <= child_index && child_index < compound.hull_count {
-        let compound_hull = get_compound_hull(compound, child_index);
+        debug_assert!(compound.hull_offset > 0);
+        let inst = &compound.hull_instances[child_index as usize];
         return ChildShape {
-            geometry: ChildGeometry::Hull(compound_hull.hull),
-            transform: compound_hull.transform,
-            material_indices: [compound_hull.material_index, 0, 0, 0],
+            geometry: ChildGeometry::Hull(&compound.shared_hulls[inst.shared_index as usize]),
+            transform: inst.transform,
+            material_indices: core::slice::from_ref(&inst.material_index),
+            material_count: 1,
             shape_type: ShapeType::Hull,
         };
     }
@@ -315,7 +368,7 @@ pub fn get_compound_child(compound: &CompoundData, mut child_index: i32) -> Chil
     // Mesh?
     if 0 <= child_index && child_index < compound.mesh_count {
         let compound_mesh = get_compound_mesh(compound, child_index);
-        debug_assert_eq!(MAX_COMPOUND_MESH_MATERIALS, 4);
+
         return ChildShape {
             geometry: ChildGeometry::Mesh(Mesh {
                 data: compound_mesh.mesh_data,
@@ -323,6 +376,7 @@ pub fn get_compound_child(compound: &CompoundData, mut child_index: i32) -> Chil
             }),
             transform: compound_mesh.transform,
             material_indices: compound_mesh.material_indices,
+            material_count: compound_mesh.material_count,
             shape_type: ShapeType::Mesh,
         };
     }
@@ -330,11 +384,14 @@ pub fn get_compound_child(compound: &CompoundData, mut child_index: i32) -> Chil
 
     debug_assert!(0 <= child_index && child_index < compound.sphere_count);
 
-    let compound_sphere = get_compound_sphere(compound, child_index);
+    // Sphere?
+    debug_assert!(compound.sphere_offset > 0);
+    let sphere = &compound.spheres[child_index as usize];
     ChildShape {
-        geometry: ChildGeometry::Sphere(compound_sphere.sphere),
+        geometry: ChildGeometry::Sphere(sphere.sphere),
         transform: TRANSFORM_IDENTITY,
-        material_indices: [compound_sphere.material_index, 0, 0, 0],
+        material_indices: core::slice::from_ref(&sphere.material_index),
+        material_count: 1,
         shape_type: ShapeType::Sphere,
     }
 }

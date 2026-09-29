@@ -78,7 +78,7 @@ pub fn compute_mesh_manifolds(
     worker_index: i32,
     contact_id: i32,
     shape_a: &Shape,
-    material_map: Option<&[i32]>,
+    material_map: Option<&[u16]>,
     xf_a: WorldTransform,
     shape_b: &Shape,
     xf_b: WorldTransform,
@@ -574,7 +574,7 @@ fn apply_mesh_materials(
     world: &mut World,
     contact_id: i32,
     shape_a: &Shape,
-    material_map: Option<&[i32]>,
+    material_map: Option<&[u16]>,
     shape_b: &Shape,
     xf_a: WorldTransform,
     xf_b: WorldTransform,
@@ -608,7 +608,7 @@ fn apply_mesh_materials(
                         let mut mi =
                             get_mesh_material_indices(data)[triangle_index as usize] as i32;
                         if let Some(map) = material_map {
-                            mi = map[mi as usize];
+                            mi = map[mi as usize] as i32;
                         }
                         mi
                     }

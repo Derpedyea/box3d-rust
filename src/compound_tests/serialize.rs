@@ -218,3 +218,50 @@ fn compound_serialize_wrong_byte_count() {
     assert!(convert_bytes_to_compound(&buffer).is_none());
     destroy_mesh(md);
 }
+
+/// `b3CompoundSphere` is a 16 byte `b3Sphere` plus two `uint16_t` (compound.c
+/// `_Static_assert( sizeof( b3CompoundSphere ) == sizeof( b3Sphere ) + 2 * sizeof( uint16_t ) )`),
+/// so the sphere array stride is 20 bytes, not the 32 byte capsule stride. Several spheres
+/// must survive the round trip and the sphere section must be sized like C's.
+#[test]
+fn compound_serialize_multiple_spheres() {
+    let mat = default_surface_material();
+    let mut mat2 = default_surface_material();
+    mat2.friction = 0.25;
+    let spheres = [
+        CompoundSphereDef {
+            sphere: Sphere {
+                center: v(-5.0, 0.0, 0.0),
+                radius: 0.5,
+            },
+            material: mat,
+        },
+        CompoundSphereDef {
+            sphere: Sphere {
+                center: v(0.0, 1.0, 2.0),
+                radius: 0.75,
+            },
+            material: mat2,
+        },
+        CompoundSphereDef {
+            sphere: Sphere {
+                center: v(3.0, -1.0, 4.0),
+                radius: 1.25,
+            },
+            material: mat,
+        },
+    ];
+    let a = create_compound(&CompoundDef {
+        spheres: &spheres,
+        ..Default::default()
+    })
+    .expect("compound");
+    // The sphere array is the last section: alignUp8( 3 * 20 ) = 64 bytes.
+    assert_eq!(a.byte_count - a.sphere_offset, 64);
+    let buffer = convert_compound_to_bytes(&a);
+    let b = convert_bytes_to_compound(&buffer).expect("deserialize");
+    assert_eq!(b.spheres, a.spheres);
+    assert_eq!(convert_compound_to_bytes(&b), buffer);
+    destroy_compound(a);
+    destroy_compound(b);
+}

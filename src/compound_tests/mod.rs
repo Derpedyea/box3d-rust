@@ -7,6 +7,7 @@
 
 mod cast_overlap_transformed;
 mod create_material;
+mod mesh_materials;
 mod query_cast;
 mod serialize;
 mod sharing;

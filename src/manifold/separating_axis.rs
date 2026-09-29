@@ -7,7 +7,7 @@
 //! The two must stay bit-identical to the wide path for cross platform determinism.
 //!
 //! SIMD separating axis test based on an implementation developed by Cairn Overturf.
-//! See his article: <https://cairno.substack.com/p/improvements-to-the-separating-axis>
+//! See his article: <https://cairnc.github.io/posts/improvements-to-the-separating-axis/>
 //!
 //! SPDX-FileCopyrightText: 2025 Erin Catto
 //! SPDX-License-Identifier: MIT
