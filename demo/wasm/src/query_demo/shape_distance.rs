@@ -8,7 +8,9 @@ use box3d_rust::distance::{
     shape_distance, DistanceInput, ShapeProxy, Simplex, SimplexCache, SimplexVertex,
 };
 use box3d_rust::hull::{make_box_hull, BoxHull};
-use box3d_rust::math_functions::{Quat, Vec3, WorldTransform, VEC3_ZERO, WORLD_TRANSFORM_IDENTITY};
+use box3d_rust::math_functions::{
+    Pos, Quat, Vec3, WorldTransform, VEC3_ZERO, WORLD_TRANSFORM_IDENTITY,
+};
 use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
 
@@ -143,7 +145,7 @@ pub fn sd_reset() {
             radius_b: 0.0,
             // C: m_transformB = {{0,1,0}, identity} (line 2079).
             transform_b: WorldTransform {
-                p: Vec3 {
+                p: Pos {
                     x: 0.0,
                     y: 1.0,
                     z: 0.0,
@@ -186,10 +188,10 @@ pub fn sd_set_params(
 pub fn sd_set_transform_b(px: f32, py: f32, pz: f32, qx: f32, qy: f32, qz: f32, qw: f32) {
     with_state(|state| {
         state.transform_b = WorldTransform {
-            p: Vec3 {
-                x: px,
-                y: py,
-                z: pz,
+            p: Pos {
+                x: px as _,
+                y: py as _,
+                z: pz as _,
             },
             q: Quat {
                 v: Vec3 {
@@ -235,9 +237,9 @@ pub fn sd_step(simplex_index: i32) -> Vec<f32> {
             state.radius_a,
             state.type_b as f32,
             state.radius_b,
-            tb.p.x,
-            tb.p.y,
-            tb.p.z,
+            tb.p.x as f32,
+            tb.p.y as f32,
+            tb.p.z as f32,
             tb.q.v.x,
             tb.q.v.y,
             tb.q.v.z,

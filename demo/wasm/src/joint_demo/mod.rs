@@ -22,7 +22,7 @@ mod vehicle;
 use crate::interact::{self, MouseGrab};
 use crate::joint_drive;
 use crate::joint_gear;
-use crate::vis::{capsule_x, pos, push_poses, sphere, vec3, VisBody};
+use crate::vis::{capsule_x, pos, pos_scalar, push_poses, sphere, vec3, VisBody};
 use box3d_rust::body::{
     body_get_angular_velocity, body_get_linear_velocity, body_get_mass_data, body_get_world_center,
     create_body,
@@ -442,9 +442,12 @@ pub fn joint_revolute_energy() -> Vec<f32> {
         let gravity = world_get_gravity(&state.world);
         // C (sample_joint.cpp:1166): `-mass * center.y * gravity.y`, keeping C's exact
         // multiply order `((-mass) * center.y) * gravity.y` and narrowing to f32 only at the
-        // final assignment (never `center.y as f32` before the products). The demo always links
-        // box3d-rust in single precision, so `center.y` is f32 and this is C's f32 path exactly.
-        let potential = (-mass_data.mass * center.y * gravity.y) as f32;
+        // final assignment (never `center.y as f32` before the products). In single precision
+        // `center.y` is f32 and this is C's f32 path exactly; under `double-precision` the float
+        // operands promote to double like C's `float * double`.
+        let potential = (pos_scalar(-mass_data.mass, center.y)
+            * center.y
+            * pos_scalar(gravity.y, center.y)) as f32;
         vec![kinetic, potential, kinetic + potential]
     })
 }

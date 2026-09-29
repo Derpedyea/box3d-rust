@@ -15,7 +15,7 @@ use box3d_rust::body::create_body;
 use box3d_rust::geometry::{Capsule, CollisionPlane, PlaneResult, Sphere};
 use box3d_rust::hull::make_box_hull;
 use box3d_rust::math_functions::{
-    is_normalized, mul_sv, offset_pos, Pos, Transform, Vec3, QUAT_IDENTITY,
+    is_normalized, mul_sv, offset_pos, Pos, Vec3, WorldTransform, QUAT_IDENTITY,
 };
 use box3d_rust::mover::solve_planes;
 use box3d_rust::shape::{create_capsule_shape, create_hull_shape, create_sphere_shape};
@@ -27,7 +27,7 @@ const PLANE_CAPACITY: usize = 32;
 /// Draggable-capsule query scene shared by CapsulePlane and MoverOverlap.
 pub(crate) struct DragScene {
     pub kind: SceneKind,
-    pub transform: Transform,
+    pub transform: WorldTransform,
     pub capsule: Capsule,
     /// Solver planes gathered on the last step (used by the Solve button).
     pub planes: Vec<CollisionPlane>,
@@ -63,7 +63,7 @@ pub(crate) fn build_capsule_plane() -> CharacterState {
 
     let scene = DragScene {
         kind: SceneKind::CapsulePlane,
-        transform: Transform {
+        transform: WorldTransform {
             p: Pos {
                 x: 0.0,
                 y: 1.0,
@@ -162,7 +162,7 @@ pub(crate) fn build_mover_overlap() -> CharacterState {
 
     let scene = DragScene {
         kind: SceneKind::MoverOverlap,
-        transform: Transform {
+        transform: WorldTransform {
             p: Pos {
                 x: 0.0,
                 y: 3.5,
@@ -297,7 +297,7 @@ pub(crate) fn step(state: &mut CharacterState) {
             // Solve the planes and show the pushed-out (cyan) capsule.
             let mut solver_planes = planes.clone();
             let solved = solve_planes(Vec3::default(), &mut solver_planes);
-            let pushed = Transform {
+            let pushed = WorldTransform {
                 p: offset_pos(transform.p, solved.delta),
                 q: transform.q,
             };

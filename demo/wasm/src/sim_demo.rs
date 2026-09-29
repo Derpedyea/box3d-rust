@@ -526,7 +526,7 @@ pub fn sim_mouse_down(ox: f32, oy: f32, oz: f32, tx: f32, ty: f32, tz: f32) -> V
             interact::vec3(tx, ty, tz),
         ) {
             let p = sim.grab.mouse_point;
-            vec![1.0, p.x, p.y, p.z]
+            vec![1.0, p.x as f32, p.y as f32, p.z as f32]
         } else {
             vec![0.0, 0.0, 0.0, 0.0]
         }

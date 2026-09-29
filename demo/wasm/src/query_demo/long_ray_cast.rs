@@ -6,7 +6,7 @@
 //! [`crate::vis::hull_triangles`] / [`crate::vis::hull_edges`]), the same hull the
 //! ray cast collides against.
 
-use crate::vis::{hf_triangle_edges, mesh_triangle_edges, push_poses, VisBody};
+use crate::vis::{hf_triangle_edges, mesh_triangle_edges, pos_scalar, push_poses, VisBody};
 use box3d_rust::body::{create_body, get_body_transform};
 use box3d_rust::geometry::{Capsule, Sphere};
 use box3d_rust::height_field::create_wave;
@@ -208,7 +208,7 @@ pub fn lrc_reset() {
     let extent_x = hf_scale.x * (hf_count - 1) as f32;
     let extent_z = hf_scale.z * (hf_count - 1) as f32;
     body_def.position = Pos {
-        x: targets[4].x - (0.5 * extent_x) as _,
+        x: targets[4].x - pos_scalar(0.5 * extent_x, targets[4].x),
         y: 0.0,
         z: (-0.5 * extent_z) as _,
     };

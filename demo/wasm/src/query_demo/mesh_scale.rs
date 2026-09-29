@@ -11,7 +11,7 @@
 use crate::vis::mesh_triangle_edges;
 use box3d_rust::body::create_body;
 use box3d_rust::id::ShapeId;
-use box3d_rust::math_functions::{Pos, Vec3, VEC3_ZERO};
+use box3d_rust::math_functions::{offset_pos, Pos, Vec3, VEC3_ZERO};
 use box3d_rust::mesh::{create_box_mesh, MeshData};
 use box3d_rust::shape::{create_mesh_shape, shape_set_mesh};
 use box3d_rust::types::{default_body_def, default_query_filter, default_shape_def};
@@ -152,11 +152,7 @@ fn compute_cast(world: &World, start: Pos, sphere_cast: bool) -> Vec<f32> {
         z: 0.0,
     };
     let filter = default_query_filter();
-    let end = Pos {
-        x: start.x + translation.x as _,
-        y: start.y + translation.y as _,
-        z: start.z + translation.z as _,
-    };
+    let end = offset_pos(start, translation);
     let mut out = vec![
         start.x as f32,
         start.y as f32,

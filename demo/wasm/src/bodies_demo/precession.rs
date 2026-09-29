@@ -16,7 +16,7 @@ use box3d_rust::body::{
 };
 use box3d_rust::id::{BodyId, NULL_BODY_ID};
 use box3d_rust::math_functions::{
-    atan2, clamp_float, dot, rotate_vector, unwind_angle, Pos, Vec3, PI, VEC3_AXIS_Y, VEC3_ZERO,
+    atan2, clamp_float, dot, rotate_vector, unwind_angle, Pos, Vec3, PI, POS_ZERO, VEC3_AXIS_Y,
 };
 use wasm_bindgen::prelude::*;
 
@@ -74,7 +74,7 @@ impl Default for PrecessionState {
             rate: 0.0,
             measuring: false,
             awake: false,
-            tip: VEC3_ZERO,
+            tip: POS_ZERO,
             axis: VEC3_AXIS_Y,
             spin: 0.0,
             cos_tilt: 0.0,

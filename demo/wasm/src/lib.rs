@@ -1,6 +1,12 @@
 // WASM bindings for the browser demos. Every value shown on the demo site is
 // computed by the ported Rust code, never re-implemented in JavaScript.
 
+// World positions (`Pos` / `WorldTransform::p`) are f64 when box3d-rust is built with
+// `double-precision` (large world mode), so the demo narrows them with `as f32` at the render
+// boundary and widens f32 values with `as _`. Those casts are no-ops in single precision; the
+// same allow the library uses in math_functions.
+#![allow(clippy::unnecessary_cast)]
+
 use wasm_bindgen::prelude::*;
 
 mod benchmark_demo;

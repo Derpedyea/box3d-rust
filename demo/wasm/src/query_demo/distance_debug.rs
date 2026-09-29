@@ -6,7 +6,7 @@
 use box3d_rust::distance::{shape_distance, DistanceInput, ShapeProxy, Simplex, SimplexCache};
 use box3d_rust::hull::{make_box_hull, make_transformed_box_hull};
 use box3d_rust::math_functions::{
-    inv_mul_world_transforms, length, Quat, Transform, Vec3, WorldTransform, VEC3_ZERO,
+    inv_mul_world_transforms, length, Pos, Quat, Transform, Vec3, WorldTransform, VEC3_ZERO,
     WORLD_TRANSFORM_IDENTITY,
 };
 use wasm_bindgen::prelude::*;
@@ -14,7 +14,7 @@ use wasm_bindgen::prelude::*;
 fn transform_b() -> WorldTransform {
     // C: m_transformB (line 1834).
     WorldTransform {
-        p: Vec3 {
+        p: Pos {
             x: -1.64657831e-06,
             y: 1.00989532471,
             z: 0.0,
@@ -127,9 +127,9 @@ pub fn dd_data(simplex_index: i32) -> Vec<f32> {
     let simplex_count = output.simplex_count;
 
     let mut out = vec![
-        xf_b.p.x,
-        xf_b.p.y,
-        xf_b.p.z,
+        xf_b.p.x as f32,
+        xf_b.p.y as f32,
+        xf_b.p.z as f32,
         xf_b.q.v.x,
         xf_b.q.v.y,
         xf_b.q.v.z,

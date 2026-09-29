@@ -27,6 +27,12 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Check workspace (single precision)
+        run: cargo check --workspace --all-targets
+
+      - name: Check workspace (double precision / large world)
+        run: cargo check --workspace --all-targets --features double-precision
+
       - name: Test (single precision)
         run: cargo test
 

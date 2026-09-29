@@ -6,7 +6,7 @@ use crate::vis::{push_poses, VisBody};
 use box3d_rust::body::{body_cast_ray, create_body};
 use box3d_rust::geometry::Capsule;
 use box3d_rust::id::BodyId;
-use box3d_rust::math_functions::{Pos, Vec3, WORLD_TRANSFORM_IDENTITY};
+use box3d_rust::math_functions::{offset_pos, Pos, Vec3, WORLD_TRANSFORM_IDENTITY};
 use box3d_rust::shape::create_capsule_shape;
 use box3d_rust::types::{default_body_def, default_query_filter, default_shape_def, BodyType};
 use box3d_rust::world::World;
@@ -93,11 +93,7 @@ fn compute_cast(world: &World, body_id: BodyId) -> Vec<f32> {
         1.0,
         WORLD_TRANSFORM_IDENTITY,
     );
-    let end = Pos {
-        x: origin.x + translation.x,
-        y: origin.y + translation.y,
-        z: origin.z + translation.z,
-    };
+    let end = offset_pos(origin, translation);
     let mut out = vec![
         origin.x as f32,
         origin.y as f32,

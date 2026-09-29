@@ -36,7 +36,7 @@ use crate::draw_data::STYLE_BODY_TYPE_SHIFT;
 use crate::obj_loader::create_mesh_data_from_obj;
 use crate::vis::{push_poses, VisBody, KIND_CAPSULE};
 use box3d_rust::geometry::Capsule;
-use box3d_rust::math_functions::{Pos, Transform, Vec3};
+use box3d_rust::math_functions::{Pos, Vec3, WorldTransform};
 use box3d_rust::mesh::MeshData;
 use box3d_rust::types::default_world_def;
 use box3d_rust::world::World;
@@ -112,7 +112,7 @@ impl Default for InputState {
 /// pushed-out ghost, the enemy/friendly avatars) — packed after `bodies` in the
 /// pose / style streams. `style` is a fully packed `draw_data` style word.
 pub(crate) struct RenderCapsule {
-    pub transform: Transform,
+    pub transform: WorldTransform,
     pub capsule: Capsule,
     pub style: u32,
 }

@@ -17,7 +17,7 @@ use box3d_rust::human::{create_human, human_set_bullet, human_set_velocity, Huma
 use box3d_rust::id::{BodyId, JointId, NULL_BODY_ID, NULL_JOINT_ID};
 use box3d_rust::joint::{create_motor_joint, destroy_joint, joint_is_valid};
 use box3d_rust::math_functions::{
-    length, Pos, Transform, Vec3, WorldTransform, QUAT_IDENTITY, VEC3_ZERO,
+    length, offset_pos, Pos, Transform, Vec3, WorldTransform, QUAT_IDENTITY, VEC3_ZERO,
 };
 use box3d_rust::shape::{create_hull_shape, create_sphere_shape, shape_get_body};
 use box3d_rust::types::{
@@ -297,11 +297,14 @@ fn pick_direction(translation: Vec3) -> Option<Vec3> {
 
 fn spawn_position(origin: Pos, direction: Vec3) -> Pos {
     // position = pickRay.origin + 2.0f * direction (sample.cpp :1221 / :1242 / :1232)
-    Pos {
-        x: origin.x + 2.0 * direction.x,
-        y: origin.y + 2.0 * direction.y,
-        z: origin.z + 2.0 * direction.z,
-    }
+    offset_pos(
+        origin,
+        Vec3 {
+            x: 2.0 * direction.x,
+            y: 2.0 * direction.y,
+            z: 2.0 * direction.z,
+        },
+    )
 }
 
 fn scaled_velocity(direction: Vec3, speed_factor: f32) -> Vec3 {

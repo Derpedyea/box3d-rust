@@ -22,8 +22,8 @@ use box3d_rust::compound::{
 use box3d_rust::geometry::{default_surface_material, Capsule, Sphere, SurfaceMaterial};
 use box3d_rust::hull::make_box_hull;
 use box3d_rust::math_functions::{
-    get_length_and_normalize, make_quat_from_axis_angle, mul_sv, offset_pos, sub_pos, Pos,
-    Transform, Vec3, QUAT_IDENTITY, VEC3_AXIS_Y, VEC3_ZERO,
+    get_length_and_normalize, make_quat_from_axis_angle, mul_sv, offset_pos, Pos, Transform, Vec3,
+    QUAT_IDENTITY, VEC3_AXIS_Y, VEC3_ZERO,
 };
 use box3d_rust::shape::create_baked_compound_shape;
 use box3d_rust::types::{default_body_def, default_query_filter, default_shape_def, BodyType};
@@ -453,15 +453,13 @@ impl VillageMover {
             viz[15] = ray.user_material_id as f32;
         }
 
-        // Sphere shape cast (closest), origin = m_rayOrigin - {1,0,1}.
-        let shape_origin = sub_pos(
-            ray_origin,
-            Vec3 {
-                x: 1.0,
-                y: 0.0,
-                z: 1.0,
-            },
-        );
+        // Sphere shape cast (closest), origin = m_rayOrigin - {1,0,1}. C's
+        // `b3Pos operator-(b3Pos, b3Vec3)` keeps the result a world position.
+        let shape_origin = Pos {
+            x: ray_origin.x - 1.0,
+            y: ray_origin.y - 0.0,
+            z: ray_origin.z - 1.0,
+        };
         let shape_end = offset_pos(shape_origin, translation);
         viz[16] = shape_origin.x as f32;
         viz[17] = shape_origin.y as f32;

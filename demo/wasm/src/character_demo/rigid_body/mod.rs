@@ -16,7 +16,7 @@ pub(crate) use scene::build_rigid_body;
 use super::{mover_capsule, with_state, CharacterState, SceneKind, SceneState};
 use box3d_rust::body::{body_get_linear_velocity, body_get_position};
 use box3d_rust::math_functions::{
-    get_length_and_normalize, sub_pos, Pos, Transform, Vec3, QUAT_IDENTITY,
+    get_length_and_normalize, sub_pos, Pos, Vec3, WorldTransform, QUAT_IDENTITY,
 };
 use box3d_rust::types::default_query_filter;
 use box3d_rust::world::world_cast_ray_closest;
@@ -117,7 +117,7 @@ fn placeholder_scene() -> SceneState {
     // A never-used placeholder while the character is moved out for the step.
     SceneState::Drag(super::overlap::DragScene {
         kind: SceneKind::CapsulePlane,
-        transform: Transform {
+        transform: WorldTransform {
             p: Pos {
                 x: 0.0,
                 y: 0.0,

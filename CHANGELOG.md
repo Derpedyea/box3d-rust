@@ -364,6 +364,13 @@ upstream commit at a time and is complete at `9f998c8`. Ported:
   or convex child material indices fall outside the compound material
   table, so corrupt compounds fail the conversion instead of panicking in
   casts, mover collision, or contacts. C trusts the blob here.
+- The wasm demo crate now builds with `double-precision` enabled
+  (`cargo check --workspace --all-targets --features double-precision`, where
+  workspace feature unification turns large world mode on for the demo's
+  box3d-rust dependency). The demo passes and receives world positions as
+  `Pos` / `WorldTransform` (widening f32 inputs, narrowing to f32 only for
+  render data) instead of assuming they are `f32`. CI now checks the whole
+  workspace in both precision modes.
 
 ### Added
 
