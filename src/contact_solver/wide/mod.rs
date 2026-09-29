@@ -24,7 +24,12 @@ use crate::constants::MAX_MANIFOLD_POINTS;
 use crate::core::NULL_INDEX;
 // Kept at the public `contact_solver::wide::SIMD_WIDTH` path for API compatibility.
 pub use crate::core::SIMD_WIDTH;
+// The wide vec3 type and its helpers live in `simd.h` upstream (moved there from
+// contact_solver.c in 9f998c8); re-exported so the solver kernels keep one path to them.
 use crate::simd_scalar::{abs_w, blend_w};
+pub use crate::simd_scalar::{
+    add_vw, cross_w, dot_w, mul_add_svw, mul_sub_svw, mul_svw, sub_vw, Vec3W,
+};
 use crate::simd_scalar::{
     add_w, div_w, greater_than_w, less_than_w, mul_w, neg_w, or_w, set_w, splat_w, sqrt_w, sub_w,
     zero_w, FloatW,
@@ -35,14 +40,6 @@ use crate::simd_scalar::{
 pub struct Vec2W {
     pub x: FloatW,
     pub y: FloatW,
-}
-
-/// Wide vec3. (b3Vec3W)
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Vec3W {
-    pub x: FloatW,
-    pub y: FloatW,
-    pub z: FloatW,
 }
 
 /// Wide quaternion. (b3QuatW)
@@ -184,62 +181,12 @@ pub struct BodyStateW {
     pub dq: QuatW,
 }
 
-// s * a
-#[inline]
-pub fn mul_svw(s: FloatW, a: Vec3W) -> Vec3W {
-    Vec3W {
-        x: mul_w(s, a.x),
-        y: mul_w(s, a.y),
-        z: mul_w(s, a.z),
-    }
-}
-
-// a - s * b
-#[inline]
-pub fn mul_sub_svw(a: Vec3W, s: FloatW, b: Vec3W) -> Vec3W {
-    Vec3W {
-        x: sub_w(a.x, mul_w(s, b.x)),
-        y: sub_w(a.y, mul_w(s, b.y)),
-        z: sub_w(a.z, mul_w(s, b.z)),
-    }
-}
-
-// a + s * b
-#[inline]
-pub fn mul_add_svw(a: Vec3W, s: FloatW, b: Vec3W) -> Vec3W {
-    Vec3W {
-        x: add_w(a.x, mul_w(s, b.x)),
-        y: add_w(a.y, mul_w(s, b.y)),
-        z: add_w(a.z, mul_w(s, b.z)),
-    }
-}
-
 // a + b
 #[inline]
 pub fn add_v2w(a: Vec2W, b: Vec2W) -> Vec2W {
     Vec2W {
         x: add_w(a.x, b.x),
         y: add_w(a.y, b.y),
-    }
-}
-
-// a - b
-#[inline]
-pub fn sub_vw(a: Vec3W, b: Vec3W) -> Vec3W {
-    Vec3W {
-        x: sub_w(a.x, b.x),
-        y: sub_w(a.y, b.y),
-        z: sub_w(a.z, b.z),
-    }
-}
-
-// a + b
-#[inline]
-pub fn add_vw(a: Vec3W, b: Vec3W) -> Vec3W {
-    Vec3W {
-        x: add_w(a.x, b.x),
-        y: add_w(a.y, b.y),
-        z: add_w(a.z, b.z),
     }
 }
 
@@ -290,22 +237,6 @@ pub fn mul_add_mvw(a: Vec3W, m: SymMatrix3W, b: Vec3W) -> Vec3W {
         x: add_w(a.x, c.x),
         y: add_w(a.y, c.y),
         z: add_w(a.z, c.z),
-    }
-}
-
-/// (b3DotW)
-#[inline]
-pub fn dot_w(a: Vec3W, b: Vec3W) -> FloatW {
-    add_w(add_w(mul_w(a.x, b.x), mul_w(a.y, b.y)), mul_w(a.z, b.z))
-}
-
-/// (b3CrossW)
-#[inline]
-pub fn cross_w(a: Vec3W, b: Vec3W) -> Vec3W {
-    Vec3W {
-        x: sub_w(mul_w(a.y, b.z), mul_w(a.z, b.y)),
-        y: sub_w(mul_w(a.z, b.x), mul_w(a.x, b.z)),
-        z: sub_w(mul_w(a.x, b.y), mul_w(a.y, b.x)),
     }
 }
 

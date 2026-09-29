@@ -5,10 +5,10 @@ semantic versioning (0.x: minor-compatible additive changes bump the patch numbe
 
 ## Unreleased
 
-Upstream sync: the C reference pin advances to `30c67b5` (upstream v0.2.0:
-64-bit rapidhash geometry hashes and triangle manifold collision fixes), and
-this port follows its API and behavior. The sync is now advancing toward
-upstream `9f998c8`, one upstream commit at a time. Ported so far:
+Upstream sync: the C reference pin advances to `9f998c8`, by way of `30c67b5`
+(upstream v0.2.0: 64-bit rapidhash geometry hashes and triangle manifold
+collision fixes), and this port follows its API and behavior. The sync ran one
+upstream commit at a time and is complete at `9f998c8`. Ported:
 
 - `47d7f7c` clockwise option, joint is awake (#130)
 - `954cf87` Fixes (#157)
@@ -18,6 +18,7 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
 - `8fda30e` (samples only, nothing to port)
 - `adec25b` SAT optimizations (#170)
 - `5643cd8` Remove compound mesh child material limit (#172)
+- `9f998c8` SAT samples (#173)
 
 ### Breaking
 
@@ -268,6 +269,25 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
   and breaks ties toward the lowest vertex index. Verified bit-identical to
   the C reference on randomized hull pairs in both precision modes;
   determinism goldens are unchanged.
+- SAT revision (upstream `9f998c8`): the `adec25b` full-query fallback in
+  `collide_hulls` is removed; an empty face contact now switches to the edge
+  contact only when the edge separation beats both face separations (or the
+  clip separation by the linear slop). The edge candidate test
+  (`test_edge_candidate`, was `arc_can_reach`) drops the center-distance
+  term. The scalar edge phase gathers each B edge from the transformed SoA
+  arrays and uses `dot` ordering, and its Gauss map tolerance is
+  `-linear_slop^2` (was `-0.0001`). Wide dot products use `b3DotW` order
+  `(x + y) + z` (the SoA transform, face dots, and support search), and the
+  support search starts its minimum at infinity. Verified bit-identical to the
+  C reference on randomized hull pairs in both precision modes.
+- The wide vec3 type and its helpers (`Vec3W`, `dot_w`, `cross_w`, `add_vw`,
+  `sub_vw`, `mul_svw`, `mul_add_svw`, `mul_sub_svw`, plus the new `load_vw`,
+  `store_vw`, `splat_vw`, `neg_vw`) now live in `simd_scalar` alongside the
+  other `simd.h` helpers, matching upstream; `contact_solver::wide`
+  re-exports the ones it used. `dot3_w` (b3Dot3W) is removed.
+- The wave-pile determinism golden changes and matches upstream in both
+  precision modes (float: sleep step 314, hash `0x8CB8F656`; double: hash
+  `0x03B509B6`).
 
 ### Fixed
 
@@ -404,6 +424,8 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
 - Ported upstream `5643cd8` tests: compound `CompoundMeshManyMaterials` and
   `CompoundMeshContactMaterial`, and the five-material compound mesh child
   addition to the recording `AllOps` session (as a focused round-trip test).
+- `create_complex_hull(radius)` (b3CreateComplexHull, upstream `9f998c8`): the
+  hull of 32 pseudo random points on a sphere from PEEL's convex pile.
 
 ## 0.3.0
 

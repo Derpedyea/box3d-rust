@@ -579,27 +579,24 @@ pub fn collide_hulls(
         debug_assert!((cache.index_b as i32) < hull_b.face_count);
     }
 
-    let mut edge_query = axis_query.edge;
-
-    // If face clipping yields no points then I need to run a full SAT to get the best edge pair.
-    if manifold.point_count == 0
-        && edge_query.separation
-            < max_float(axis_query.face_a.separation, axis_query.face_b.separation)
-    {
-        edge_query = compute_separating_axis(hull_a, hull_b, transform_b_to_a, false).edge;
-    }
+    let edge_query = axis_query.edge;
 
     if edge_query.index_a == NULL_INDEX {
         // There are no valid edge pairs (all edges parallel)
         return;
     }
 
+    let face_separation = max_float(axis_query.face_a.separation, axis_query.face_b.separation);
     let clip_separation = cache.separation;
     let edge_tol = slop;
 
-    // Face contact can be empty if it does not realize the axis of minimum penetration.
-    // Create edge contact if face contact fails or edge contact is significantly better!
-    if manifold.point_count == 0 || edge_query.separation > clip_separation + edge_tol {
+    // Face contact can be empty if it is not the axis of maximum separation. It can also
+    // be empty in narrow cases in the speculative region. If that case was important then
+    // a GJK fallback would be used. So far it doesn't seem important.
+    // Create edge contact if face contact fails or edge contact is significantly better.
+    if (manifold.point_count == 0 && edge_query.separation > face_separation)
+        || edge_query.separation > clip_separation + edge_tol
+    {
         debug_assert!(0 <= edge_query.index_a && edge_query.index_a < hull_a.edge_count);
         debug_assert!(0 <= edge_query.index_b && edge_query.index_b < hull_b.edge_count);
 

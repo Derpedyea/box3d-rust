@@ -73,15 +73,18 @@ pub fn serialize_world(world: &World, buf: &mut RecBuffer, registry: &mut Geomet
     buf.append_u32(SNAP_MAGIC);
     buf.append_u32(SNAP_VERSION);
     buf.append_u32(compute_layout_hash());
-    let mut flags = 0u32;
-    #[cfg(debug_assertions)]
-    {
-        flags |= SNAP_FLAG_VALIDATION;
-    }
-    #[cfg(feature = "double-precision")]
-    {
-        flags |= SNAP_FLAG_DOUBLE_PRECISION;
-    }
+    // Built without `mut` so release float builds (both flags compiled out) don't warn.
+    let validation_flag = if cfg!(debug_assertions) {
+        SNAP_FLAG_VALIDATION
+    } else {
+        0
+    };
+    let precision_flag = if cfg!(feature = "double-precision") {
+        SNAP_FLAG_DOUBLE_PRECISION
+    } else {
+        0
+    };
+    let flags = validation_flag | precision_flag;
     buf.append_u32(flags);
 
     ser_world_config(buf, world);

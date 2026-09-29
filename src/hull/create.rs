@@ -582,3 +582,45 @@ pub fn create_rock(radius: f32) -> Option<HullData> {
 
     create_hull(&points, point_count as i32)
 }
+
+/// PEEL's BasicRandom. This is just for testing. (static b3NextComplexHullRandom)
+fn next_complex_hull_random(state: &mut u32) -> u32 {
+    *state = state.wrapping_mul(2147001325).wrapping_add(715136305);
+    *state
+}
+
+/// (static b3ComplexHullRandomFloat)
+fn complex_hull_random_float(state: &mut u32) -> f32 {
+    (next_complex_hull_random(state) & 0xffff) as f32 / 65535.0 - 0.5
+}
+
+/// (static b3ComplexHullRandomDirection)
+fn complex_hull_random_direction(state: &mut u32) -> Vec3 {
+    let mut point;
+    loop {
+        let x = complex_hull_random_float(state);
+        let y = complex_hull_random_float(state);
+        let z = complex_hull_random_float(state);
+        point = Vec3 { x, y, z };
+        let length_squared = crate::math_functions::dot(point, point);
+        if length_squared <= 0.25 {
+            break;
+        }
+    }
+
+    crate::math_functions::normalize(point)
+}
+
+/// Hull of 32 pseudo random points on a sphere. From the convex pile hull in PEEL.
+/// (b3CreateComplexHull)
+pub fn create_complex_hull(radius: f32) -> Option<HullData> {
+    const POINT_COUNT: usize = 32;
+
+    let mut points = [VEC3_ZERO; POINT_COUNT];
+    let mut state: u32 = 42;
+    for point in points.iter_mut() {
+        *point = mul_sv(radius, complex_hull_random_direction(&mut state));
+    }
+
+    create_hull(&points, POINT_COUNT as i32)
+}

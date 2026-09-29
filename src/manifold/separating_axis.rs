@@ -13,7 +13,7 @@
 //! SPDX-License-Identifier: MIT
 
 use super::types::{AxisQuery, SeparatingAxis, SeparatingFeature};
-use crate::constants::{huge, linear_slop, speculative_distance, PARALLEL_EDGE_TOL};
+use crate::constants::{linear_slop, speculative_distance, PARALLEL_EDGE_TOL};
 use crate::core::{NULL_INDEX, SIMD_WIDTH};
 use crate::hull::{
     get_hull_edges, get_hull_planes, get_hull_soa_normals, get_hull_soa_vertices,
@@ -21,11 +21,11 @@ use crate::hull::{
 };
 use crate::math_functions::{
     aabb_center, aabb_extents, abs, add, dot, length, make_matrix_from_quat, max_float, min_float,
-    mul_mv, neg, sub, transpose, Matrix3, Transform, Vec3, VEC3_ZERO,
+    mul_add, mul_mv, mul_sv, neg, sub, transpose, Matrix3, Transform, Vec3, VEC3_ZERO,
 };
 use crate::simd_scalar::{
-    add_w, dot3_w, embed_index_w, load_w, min_index_w, min_w, mul_w, neg_w, splat_w, store_w,
-    sub_w, zero_w,
+    add_vw, dot_w, embed_index_w, load_vw, min_index_w, min_w, neg_vw, splat_vw, splat_w, store_vw,
+    store_w, sub_w, zero_w, Vec3W,
 };
 
 const HULL_BIT_COUNT: i32 = 7;
@@ -35,7 +35,7 @@ const HULL_BIT_COUNT: i32 = 7;
 /// `is_point` gates the translation add so it is only applied for points. (b3NegativeTransformFromSoA)
 #[allow(clippy::too_many_arguments)]
 fn negative_transform_from_soa(
-    r: &Matrix3,
+    r: Matrix3,
     p: Vec3,
     in_x: &[f32],
     in_y: &[f32],
@@ -47,46 +47,52 @@ fn negative_transform_from_soa(
     is_point: bool,
 ) {
     // row-column
-    let r00 = splat_w(r.cx.x);
-    let r01 = splat_w(r.cy.x);
-    let r02 = splat_w(r.cz.x);
-    let r10 = splat_w(r.cx.y);
-    let r11 = splat_w(r.cy.y);
-    let r12 = splat_w(r.cz.y);
-    let r20 = splat_w(r.cx.z);
-    let r21 = splat_w(r.cy.z);
-    let r22 = splat_w(r.cz.z);
+    let r0 = Vec3W {
+        x: splat_w(r.cx.x),
+        y: splat_w(r.cy.x),
+        z: splat_w(r.cz.x),
+    };
+    let r1 = Vec3W {
+        x: splat_w(r.cx.y),
+        y: splat_w(r.cy.y),
+        z: splat_w(r.cz.y),
+    };
+    let r2 = Vec3W {
+        x: splat_w(r.cx.z),
+        y: splat_w(r.cy.z),
+        z: splat_w(r.cz.z),
+    };
 
-    let mut tx = zero_w();
-    let mut ty = zero_w();
-    let mut tz = zero_w();
-
+    let mut t = Vec3W {
+        x: zero_w(),
+        y: zero_w(),
+        z: zero_w(),
+    };
     if is_point {
-        tx = splat_w(p.x);
-        ty = splat_w(p.y);
-        tz = splat_w(p.z);
+        t = splat_vw(p);
     }
 
     let mut i = 0;
     while i < n {
-        let x = load_w(&in_x[i..]);
-        let y = load_w(&in_y[i..]);
-        let z = load_w(&in_z[i..]);
+        let v = load_vw(&in_x[i..], &in_y[i..], &in_z[i..]);
 
         // Rotate four vectors at a time
-        let mut ox = dot3_w(r00, r01, r02, x, y, z);
-        let mut oy = dot3_w(r10, r11, r12, x, y, z);
-        let mut oz = dot3_w(r20, r21, r22, x, y, z);
+        let mut out = Vec3W {
+            x: dot_w(r0, v),
+            y: dot_w(r1, v),
+            z: dot_w(r2, v),
+        };
 
         if is_point {
-            ox = add_w(ox, tx);
-            oy = add_w(oy, ty);
-            oz = add_w(oz, tz);
+            out = add_vw(out, t);
         }
 
-        store_w(&mut out_x[i..], neg_w(ox));
-        store_w(&mut out_y[i..], neg_w(oy));
-        store_w(&mut out_z[i..], neg_w(oz));
+        store_vw(
+            &mut out_x[i..],
+            &mut out_y[i..],
+            &mut out_z[i..],
+            neg_vw(out),
+        );
 
         i += 4;
     }
@@ -115,21 +121,17 @@ fn get_support_wide(
     n: usize,
     bias: f32,
 ) -> (f32, i32) {
-    let nx = splat_w(normal.x);
-    let ny = splat_w(normal.y);
-    let nz = splat_w(normal.z);
+    let normal_w = splat_vw(normal);
     let bias_v = splat_w(bias);
 
     // Start the minimum at a large value.
-    let mut min_value = splat_w(huge());
+    let mut min_value = splat_w(f32::INFINITY);
 
     // Tail lanes hold vertex 0 with index bits >= vertexCount, so they never become the min value.
     let mut i = 0;
     while i < n {
-        let x = load_w(&vx[i..]);
-        let y = load_w(&vy[i..]);
-        let z = load_w(&vz[i..]);
-        let d = add_w(mul_w(nz, z), add_w(mul_w(ny, y), mul_w(nx, x)));
+        let v = load_vw(&vx[i..], &vy[i..], &vz[i..]);
+        let d = dot_w(normal_w, v);
 
         // This is always positive.
         let value = sub_w(bias_v, d);
@@ -174,21 +176,12 @@ fn get_face_dots(hull: &HullData, d: Vec3, dots: &mut [f32]) {
     let ny = &normals[soa_face_count..2 * soa_face_count];
     let nz = &normals[2 * soa_face_count..3 * soa_face_count];
 
-    let dx = splat_w(d.x);
-    let dy = splat_w(d.y);
-    let dz = splat_w(d.z);
+    let d_w = splat_vw(d);
 
     let mut i = 0;
     while i < soa_face_count {
         // dot product per lane
-        let m = dot3_w(
-            load_w(&nx[i..]),
-            load_w(&ny[i..]),
-            load_w(&nz[i..]),
-            dx,
-            dy,
-            dz,
-        );
+        let m = dot_w(load_vw(&nx[i..], &ny[i..], &nz[i..]), d_w);
         store_w(&mut dots[i..], m);
         i += 4;
     }
@@ -197,55 +190,86 @@ fn get_face_dots(hull: &HullData, d: Vec3, dots: &mut [f32]) {
 /// (B3_PARALLEL_TOL)
 const PARALLEL_TOL: f32 = 1e-4;
 
-/// A hull edges is bounded by two face normals. On the Gauss map the edge becomes an arc between
-/// those two face normals. This edge can only build the best separating axis if a normal on that arc
-/// can beat the best separation value seen so far. This test determines of such a normal exists.
+/// A hull edge is bounded by two face normals. On the Gauss map the edge becomes an arc between
+/// those two face normals. An edge can only build the best separating axis if a normal on that arc
+/// can beat the best separation value seen so far. This function determines if the upper bound
+/// separation on that arc can possibly beat the current maximum face separation.
+///
 /// This follows the upper bound used for hull faces:
 /// separation_upper_bound = dot(axis, centerB - centerA) - innerRadiusA - innerRadiusB
 ///
 /// Inputs:
 /// d the vector connecting the hull centers
-/// a = dot(u, d)
-/// b = dot(v, d)
-/// c = dot(u, v)
-/// length = length(d)
-/// bound = max_sep + radiusBound
-/// Note: this doesn't compute the separation, it just rules out potential candidates. So if some input
-/// is degenerate it just pass the candidate onto the next stage.
-/// (b3ArcCanReach)
-pub(crate) fn arc_can_reach(a: f32, b: f32, c: f32, length: f32, bound: f32) -> usize {
+/// a1 = dot(n1, d)
+/// a2 = dot(n2, d)
+/// c = dot(n1, n2)
+/// bound = maxFaceSeparation + radiusBound
+///
+/// This returns 1 if the edges is a candidate and 0 otherwise.
+/// (b3TestEdgeCandidate)
+pub(crate) fn test_edge_candidate(a1: f32, a2: f32, c: f32, bound: f32) -> usize {
     // c = cos(theta), the angle between the normals.
     // s = sin(theta)^2 >= 0
     let s = 1.0 - c * c;
 
-    // This is coincidently the law of cosines. Break out your protractor.
-    let t = a * a + b * b - 2.0 * a * b * c;
+    // This is coincidentally the law of cosines. Break out your protractor.
+    let t = a1 * a1 + a2 * a2 - 2.0 * a1 * a2 * c;
 
-    // Do either face normals beat the best separation?
-    let endpoint = (max_float(a, b) >= bound) as usize;
+    // Exterior conditions:
+    // Can either face normal beat the best separation? These cover the case where
+    // d is outside the arc. Note that d pointing outside the arc does not cull this
+    // edge. It can still generate the maximum separation (happens commonly).
+    // Note: when earlyReturn == false, bound == -INFINITY and this is always true.
+    let exterior = (max_float(a1, a2) >= bound) as usize;
 
-    // Project d into the plane that holds both u and v, call that vector g:
-    // g = x*u + y*v
-    // Note that dot(u, g) == dot(u, d) == a, and dot(v, g) == dot(v, d) == b
-    // Dot the equation with u and v:
-    // a = x + y*c
-    // b = x*c + y
-    // Solve for x and y using Cramer's Rule
-    // x = (a - b * c) / (1 - c * c)
-    // y = (b - a * c) / (1 - c * c)
-    // s = 1 - c * c is greater than 0, so x and y must be positive for n to live between u and v.
-    // The peak value along d is then dot(g, n):
-    // dot(g, n) = x*a + y*b = (a*a - a*b*c + b*b - a*b*c) / s = (a*a + b*b - 2*a*b*c) / s = t / s
-    // If that peak value beats the threshold then this edge might form the best separating axis.
-    // Using bit ops here to prevent unpredictable branches.
-    let interior = ((a >= c * b) as usize)
-        & ((b >= c * a) as usize)
-        & ((length >= bound) as usize)
+    // Project d into the plane that holds both n1 and n2, call that vector dp.
+    // Introduce the coordinates b1 and b2 (these have units of length).
+    //
+    // dp = b1*n1 + b2*n2
+    //
+    // Since dp is the projection of d into the plane formed by the cross(n1, n2):
+    // dot(n1, dp) == dot(n1, d) == a1
+    // dot(n2, dp) == dot(n2, d) == a2
+    //
+    // Dot the equation with n1 and n2:
+    // a1 = b1 + b2*c
+    // a2 = b1*c + b2
+    //
+    // Solve for b1 and b2 using Cramer's Rule
+    // b1 = (a1 - a2 * c) / s
+    // b2 = (a2 - a1 * c) / s
+    //
+    // s = 1 - c * c is positive, so b1 and b2 must be positive for d to live in
+    // the arc between n1 and n2.
+    //
+    // The peak value along d is then norm(dp):
+    // dot(dp, dp) = dot(b1*n1 + b2*n2, d)
+    //             = b1*a1 + b2*a2
+    //             = (a1*a1 - a1*a2*c + a2*a2 - a1*a2*c) / s
+    //             = (a1*a1 + a2*a2 - 2*a1*a2*c) / s
+    //             = t / s
+    //
+    // The interior is a candidate if:
+    // norm(dp) > bound
+    // sqrt(t / s) > bound
+    // If bound < 0 this is always true. Otherwise
+    // t > bound^2 * s
+    //
+    // Interior conditions:
+    // b1 and b2 positive (interior arc): a1 >= c * a2 & a2 >= c * a1
+    // bound <= 0.0: the interior arc is automatically a candidate because it is positive
+    // s < B3_PARALLEL_TOL : n1 and n2 are nearly parallel so give up and pass the edge to the next stage
+    // t >= bound * bound * s : bound is positive and the interior normal direction is a candidate
+    //
+    // Using bit ops here to avoid branches.
+
+    let interior = ((a1 >= c * a2) as usize)
+        & ((a2 >= c * a1) as usize)
         & (((bound <= 0.0) as usize)
             | ((s < PARALLEL_TOL) as usize)
             | ((t >= bound * bound * s) as usize));
 
-    endpoint | interior
+    exterior | interior
 }
 
 // Temporary abbreviations for convenience.
@@ -305,7 +329,7 @@ pub(crate) fn compute_separating_axis(
     let h_b = aabb_extents(hull_b.aabb);
 
     // The hulls have a precomputed inner radius and centroid.
-    // A give axis cannot achieve a separation larger than:
+    // A given axis cannot achieve a separation larger than:
     // dot(axis, centerB - centerA) - innerRadiusA - innerRadiusB
     // So this is the upper bound for the separation of a candidate axis.
     // An axis can be skipped if it has an upper bound that is less than the current
@@ -457,7 +481,6 @@ pub(crate) fn compute_separating_axis(
             res.face_b.separation = separation;
             res.face_b.index_a = vertex_index;
             res.face_b.index_b = i;
-            // This points from A to B and is in frame A
             if separation > speculative && early_return {
                 res.separated_feature = SeparatingFeature::FaceAxisB;
                 return res;
@@ -487,7 +510,9 @@ pub(crate) fn compute_separating_axis(
         f32::NEG_INFINITY
     };
 
-    // Gather edges of A that can feasibly create a winning separating axis.
+    debug_assert!(!early_return || center_distance >= edge_bound);
+
+    // Gather edges of A that can feasibly create a separating axis that beats the maximum face separation.
     let half_edge_count_a = hull_a.edge_count;
     let half_edges_a = get_hull_edges(hull_a);
     let mut edge_indices_a = [0i32; NE];
@@ -498,11 +523,11 @@ pub(crate) fn compute_separating_axis(
         let i2 = half_edges_a[(i + 1) as usize].face as usize;
         let c = dot(planes_a[i1].normal, planes_a[i2].normal);
         edge_indices_a[na] = i;
-        na += arc_can_reach(dot_a[i1], dot_a[i2], c, center_distance, edge_bound);
+        na += test_edge_candidate(dot_a[i1], dot_a[i2], c, edge_bound);
         i += 2;
     }
 
-    // Gather edges of B that can feasibly create a winning separating axis.
+    // Similar for edges of B.
     let half_edge_count_b = hull_b.edge_count;
     let half_edges_b = get_hull_edges(hull_b);
     let mut edge_indices_b = [0i32; crate::constants::MAX_HULL_EDGES as usize];
@@ -513,7 +538,7 @@ pub(crate) fn compute_separating_axis(
         let i2 = half_edges_b[(i + 1) as usize].face as usize;
         let c = dot(planes_b[i1].normal, planes_b[i2].normal);
         edge_indices_b[nb] = i;
-        nb += arc_can_reach(dot_b[i1], dot_b[i2], c, center_distance, edge_bound);
+        nb += test_edge_candidate(dot_b[i1], dot_b[i2], c, edge_bound);
         i += 2;
     }
 
@@ -541,7 +566,7 @@ pub(crate) fn compute_separating_axis(
     let nz_b = &normals_b[2 * soa_face_count_b..3 * soa_face_count_b];
 
     negative_transform_from_soa(
-        &r,
+        r,
         xf_b.p,
         nx_b,
         ny_b,
@@ -553,7 +578,7 @@ pub(crate) fn compute_separating_axis(
         false,
     );
     negative_transform_from_soa(
-        &r,
+        r,
         xf_b.p,
         vx_b,
         vy_b,
@@ -564,42 +589,6 @@ pub(crate) fn compute_separating_axis(
         &mut b_wz,
         true,
     );
-
-    // Per B edge data. C and D are the two face normals, v0 a vertex, DC the edge vector.
-    let mut b_cx = [0.0f32; NE];
-    let mut b_cy = [0.0f32; NE];
-    let mut b_cz = [0.0f32; NE];
-    let mut b_dx = [0.0f32; NE];
-    let mut b_dy = [0.0f32; NE];
-    let mut b_dz = [0.0f32; NE];
-    let mut b_v0x = [0.0f32; NE];
-    let mut b_v0y = [0.0f32; NE];
-    let mut b_v0z = [0.0f32; NE];
-    let mut b_dcx = [0.0f32; NE];
-    let mut b_dcy = [0.0f32; NE];
-    let mut b_dcz = [0.0f32; NE];
-
-    for k in 0..nb {
-        let edge = &half_edges_b[edge_indices_b[k] as usize];
-        let twin = &half_edges_b[(edge_indices_b[k] + 1) as usize];
-        let f0 = edge.face as usize;
-        let f1 = twin.face as usize;
-        let v0 = edge.origin as usize;
-        let v1 = twin.origin as usize;
-
-        b_cx[k] = b_fnx[f0];
-        b_cy[k] = b_fny[f0];
-        b_cz[k] = b_fnz[f0];
-        b_dx[k] = b_fnx[f1];
-        b_dy[k] = b_fny[f1];
-        b_dz[k] = b_fnz[f1];
-        b_v0x[k] = b_wx[v0];
-        b_v0y[k] = b_wy[v0];
-        b_v0z[k] = b_wz[v0];
-        b_dcx[k] = b_wx[v1] - b_wx[v0];
-        b_dcy[k] = b_wy[v1] - b_wy[v0];
-        b_dcz[k] = b_wz[v1] - b_wz[v0];
-    }
 
     // Per A edge data, already in A's space so just gathered. n0 and n1 are the two face
     // normals, d the edge vector av1-av0, v0 the first vertex. Tol is the
@@ -648,52 +637,84 @@ pub(crate) fn compute_separating_axis(
 
     // Zero the tail lanes.
     let zero = zero_w();
-    store_w(&mut a_n0x[na..], zero);
-    store_w(&mut a_n0y[na..], zero);
-    store_w(&mut a_n0z[na..], zero);
-    store_w(&mut a_n1x[na..], zero);
-    store_w(&mut a_n1y[na..], zero);
-    store_w(&mut a_n1z[na..], zero);
-    store_w(&mut a_dx[na..], zero);
-    store_w(&mut a_dy[na..], zero);
-    store_w(&mut a_dz[na..], zero);
-    store_w(&mut a_v0x[na..], zero);
-    store_w(&mut a_v0y[na..], zero);
-    store_w(&mut a_v0z[na..], zero);
+    let zero_v = Vec3W {
+        x: zero,
+        y: zero,
+        z: zero,
+    };
+    store_vw(&mut a_n0x[na..], &mut a_n0y[na..], &mut a_n0z[na..], zero_v);
+    store_vw(&mut a_n1x[na..], &mut a_n1y[na..], &mut a_n1z[na..], zero_v);
+    store_vw(&mut a_dx[na..], &mut a_dy[na..], &mut a_dz[na..], zero_v);
+    store_vw(&mut a_v0x[na..], &mut a_v0y[na..], &mut a_v0z[na..], zero_v);
     store_w(&mut a_tol[na..], zero);
+
+    let slop = linear_slop();
 
     // The SIMD emulated version of this code is very slow. This is a purely scalar version
     // for platforms that don't have SIMD capability. It is much faster than SIMD emulation.
     // WARNING: this math needs to match the SIMD version for cross platform determinism.
 
-    const EPS: f32 = -0.0001;
+    let eps = -slop * slop;
 
     for j in 0..nb {
-        let cx = b_cx[j];
-        let cy = b_cy[j];
-        let cz = b_cz[j];
-        let dx = b_dx[j];
-        let dy = b_dy[j];
-        let dz = b_dz[j];
-        let dcx = b_dcx[j];
-        let dcy = b_dcy[j];
-        let dcz = b_dcz[j];
-        let bv0x = b_v0x[j];
-        let bv0y = b_v0y[j];
-        let bv0z = b_v0z[j];
+        let edge = &half_edges_b[edge_indices_b[j] as usize];
+        let twin = &half_edges_b[(edge_indices_b[j] + 1) as usize];
+        let f0 = edge.face as usize;
+        let f1 = twin.face as usize;
+        let v0 = edge.origin as usize;
+        let v1 = twin.origin as usize;
+
+        let c = Vec3 {
+            x: b_fnx[f0],
+            y: b_fny[f0],
+            z: b_fnz[f0],
+        };
+        let d_n = Vec3 {
+            x: b_fnx[f1],
+            y: b_fny[f1],
+            z: b_fnz[f1],
+        };
+        let bv0 = Vec3 {
+            x: b_wx[v0],
+            y: b_wy[v0],
+            z: b_wz[v0],
+        };
+        let bv1 = Vec3 {
+            x: b_wx[v1],
+            y: b_wy[v1],
+            z: b_wz[v1],
+        };
+        let dc = sub(bv1, bv0);
 
         for i in 0..na {
+            let d = Vec3 {
+                x: a_dx[i],
+                y: a_dy[i],
+                z: a_dz[i],
+            };
+
             // CBA = C.dir, DBA = D.dir, where dir = B_x_A
-            let cba = cx * a_dx[i] + (cy * a_dy[i] + cz * a_dz[i]);
-            let dba = dx * a_dx[i] + (dy * a_dy[i] + dz * a_dz[i]);
-            if cba * dba >= EPS {
+            let cba = dot(c, d);
+            let dba = dot(d_n, d);
+            if cba * dba >= eps {
                 continue;
             }
 
+            let n0 = Vec3 {
+                x: a_n0x[i],
+                y: a_n0y[i],
+                z: a_n0z[i],
+            };
+            let n1 = Vec3 {
+                x: a_n1x[i],
+                y: a_n1y[i],
+                z: a_n1z[i],
+            };
+
             // ADC = n0.DC, BDC = n1.DC, where DC = D_x_C
-            let adc = a_n0x[i] * dcx + (a_n0y[i] * dcy + a_n0z[i] * dcz);
-            let bdc = a_n1x[i] * dcx + (a_n1y[i] * dcy + a_n1z[i] * dcz);
-            if adc * bdc >= EPS || cba * bdc >= EPS {
+            let adc = dot(n0, dc);
+            let bdc = dot(n1, dc);
+            if adc * bdc >= eps || cba * bdc >= eps {
                 continue;
             }
 
@@ -707,27 +728,20 @@ pub(crate) fn compute_separating_axis(
             let t = -cba / (dba - cba);
 
             // normal = lerp(t, C, D) = C + (D-C)*t
-            let mut nx = cx + t * (dx - cx);
-            let mut ny = cy + t * (dy - cy);
-            let mut nz = cz + t * (dz - cz);
-            let len2 = nx * nx + (ny * ny + nz * nz);
+            let mut n = mul_add(c, t, sub(d_n, c));
+            let len2 = dot(n, n);
             let inv = 1.0 / len2.sqrt();
-            nx *= inv;
-            ny *= inv;
-            nz *= inv;
+            n = mul_sv(inv, n);
 
             // separation = -dot(normal, av0 + bv0)
-            let sx = a_v0x[i] + bv0x;
-            let sy = a_v0y[i] + bv0y;
-            let sz = a_v0z[i] + bv0z;
-
-            let separation = -(sx * nx + (sy * ny + sz * nz));
+            let av0 = Vec3 {
+                x: a_v0x[i],
+                y: a_v0y[i],
+                z: a_v0z[i],
+            };
+            let separation = -dot(add(av0, bv0), n);
             if separation > res.edge.separation {
-                res.edge.normal = Vec3 {
-                    x: nx,
-                    y: ny,
-                    z: nz,
-                };
+                res.edge.normal = n;
                 res.edge.separation = separation;
 
                 // Half edge index

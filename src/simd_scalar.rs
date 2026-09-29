@@ -7,9 +7,10 @@
 //! The logical helpers (`and_w`, `or_w`, comparisons) return `0.0`/`1.0` float
 //! masks rather than bit-wise all-ones masks, exactly like the C scalar path.
 //!
-//! The scalar separating-axis face phase (`manifold::separating_axis`), the hull support
-//! vertex search (`hull::find_hull_support_vertex`), and the wide convex contact kernels
-//! (`contact_solver::wide`) consume these helpers. The rest back the wide
+//! The wide vec3 type and its helpers (`Vec3W`, `dot_w`, ...) also live here, as they do in
+//! upstream `simd.h`. The scalar separating-axis face phase (`manifold::separating_axis`),
+//! the hull support vertex search (`hull::find_hull_support_vertex`), and the wide convex
+//! contact kernels (`contact_solver::wide`) consume these helpers. The rest back the wide
 //! (`b3_simdWidth > 1`) collide path from `convex_manifold.c`, which the port does not
 //! target, and are retained as a complete port of the `simd.h` scalar API.
 //!
@@ -277,17 +278,6 @@ pub fn blend_w(a: FloatW, b: FloatW, mask: FloatW) -> FloatW {
     }
 }
 
-/// Component-wise 3D dot product across the four lanes. (b3Dot3W)
-#[inline]
-pub fn dot3_w(ax: FloatW, ay: FloatW, az: FloatW, bx: FloatW, by: FloatW, bz: FloatW) -> FloatW {
-    FloatW {
-        x: ax.x * bx.x + (ay.x * by.x + az.x * bz.x),
-        y: ax.y * bx.y + (ay.y * by.y + az.y * bz.y),
-        z: ax.z * bx.z + (ay.z * by.z + az.z * bz.z),
-        w: ax.w * bx.w + (ay.w * by.w + az.w * bz.w),
-    }
-}
-
 /// Replace the low `bit_count` mantissa bits of each lane with `base_index + lane`.
 /// The value must be positive so the embedded index sorts with the value, and ties
 /// fall to the lower index. (b3EmbedIndexW)
@@ -371,5 +361,117 @@ pub fn soft_mask_w(index_a: &[i32; 4], index_b: &[i32; 4]) -> FloatW {
         } else {
             0.0
         },
+    }
+}
+
+/// Wide vec3. (b3Vec3W)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Vec3W {
+    pub x: FloatW,
+    pub y: FloatW,
+    pub z: FloatW,
+}
+
+/// (b3LoadVW)
+#[inline]
+pub fn load_vw(x: &[f32], y: &[f32], z: &[f32]) -> Vec3W {
+    Vec3W {
+        x: load_w(x),
+        y: load_w(y),
+        z: load_w(z),
+    }
+}
+
+/// (b3StoreVW)
+#[inline]
+pub fn store_vw(x: &mut [f32], y: &mut [f32], z: &mut [f32], v: Vec3W) {
+    store_w(x, v.x);
+    store_w(y, v.y);
+    store_w(z, v.z);
+}
+
+/// (b3SplatVW)
+#[inline]
+pub fn splat_vw(v: crate::math_functions::Vec3) -> Vec3W {
+    Vec3W {
+        x: splat_w(v.x),
+        y: splat_w(v.y),
+        z: splat_w(v.z),
+    }
+}
+
+/// (b3NegVW)
+#[inline]
+pub fn neg_vw(a: Vec3W) -> Vec3W {
+    Vec3W {
+        x: neg_w(a.x),
+        y: neg_w(a.y),
+        z: neg_w(a.z),
+    }
+}
+
+/// s * a (b3MulSVW)
+#[inline]
+pub fn mul_svw(s: FloatW, a: Vec3W) -> Vec3W {
+    Vec3W {
+        x: mul_w(s, a.x),
+        y: mul_w(s, a.y),
+        z: mul_w(s, a.z),
+    }
+}
+
+/// a - s * b (b3MulSubSVW)
+#[inline]
+pub fn mul_sub_svw(a: Vec3W, s: FloatW, b: Vec3W) -> Vec3W {
+    Vec3W {
+        x: sub_w(a.x, mul_w(s, b.x)),
+        y: sub_w(a.y, mul_w(s, b.y)),
+        z: sub_w(a.z, mul_w(s, b.z)),
+    }
+}
+
+/// a + s * b (b3MulAddSVW)
+#[inline]
+pub fn mul_add_svw(a: Vec3W, s: FloatW, b: Vec3W) -> Vec3W {
+    Vec3W {
+        x: add_w(a.x, mul_w(s, b.x)),
+        y: add_w(a.y, mul_w(s, b.y)),
+        z: add_w(a.z, mul_w(s, b.z)),
+    }
+}
+
+/// a - b (b3SubVW)
+#[inline]
+pub fn sub_vw(a: Vec3W, b: Vec3W) -> Vec3W {
+    Vec3W {
+        x: sub_w(a.x, b.x),
+        y: sub_w(a.y, b.y),
+        z: sub_w(a.z, b.z),
+    }
+}
+
+/// a + b (b3AddVW)
+#[inline]
+pub fn add_vw(a: Vec3W, b: Vec3W) -> Vec3W {
+    Vec3W {
+        x: add_w(a.x, b.x),
+        y: add_w(a.y, b.y),
+        z: add_w(a.z, b.z),
+    }
+}
+
+/// `(a.x * b.x + a.y * b.y) + a.z * b.z` per lane. (b3DotW)
+#[inline]
+pub fn dot_w(a: Vec3W, b: Vec3W) -> FloatW {
+    add_w(add_w(mul_w(a.x, b.x), mul_w(a.y, b.y)), mul_w(a.z, b.z))
+}
+
+/// (b3CrossW)
+#[inline]
+pub fn cross_w(a: Vec3W, b: Vec3W) -> Vec3W {
+    Vec3W {
+        x: sub_w(mul_w(a.y, b.z), mul_w(a.z, b.y)),
+        y: sub_w(mul_w(a.z, b.x), mul_w(a.x, b.z)),
+        z: sub_w(mul_w(a.x, b.y), mul_w(a.y, b.x)),
     }
 }
