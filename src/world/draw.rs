@@ -96,7 +96,7 @@ fn draw_query_callback(world: &mut World, draw: &mut dyn DebugDraw, shape_id: i3
     }
 
     if draw.draw_bounds_boxes() {
-        let fat_aabb = world.shapes[shape_id as usize].fat_aabb;
+        let fat_aabb = world.fat_aabbs[shape_id as usize];
         draw.draw_bounds(fat_aabb, HexColor::GOLD);
     }
 }
@@ -248,7 +248,7 @@ fn draw_body_contacts(
                     } else {
                         60.0
                     };
-                    let force = 0.5 * mp.total_normal_impulse * inv_dt;
+                    let force = mp.total_normal_impulse * inv_dt;
                     let p1 = p;
                     let p2 = offset_pos(p1, mul_sv(draw.force_scale() * force, normal));
                     draw.draw_segment(p1, p2, impulse_color);
@@ -332,7 +332,7 @@ fn draw_body_island(world: &mut World, draw: &mut dyn DebugDraw, body_id: i32) {
         let mut shape_id = world.bodies[island_body_id as usize].head_shape_id;
         while shape_id != NULL_INDEX {
             let shape = &world.shapes[shape_id as usize];
-            aabb = aabb_union(aabb, shape.fat_aabb);
+            aabb = aabb_union(aabb, world.fat_aabbs[shape_id as usize]);
             shape_count += 1;
             shape_id = shape.next_shape_id;
         }

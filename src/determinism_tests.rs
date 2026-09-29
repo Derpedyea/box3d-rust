@@ -22,9 +22,9 @@ use crate::world::World;
 // step and the state hash differ from the float build. Both modes are
 // internally deterministic. Values from test_determinism.c.
 #[cfg(feature = "double-precision")]
-const RAGDOLL_SLEEP_STEP: i32 = 277;
+const RAGDOLL_SLEEP_STEP: i32 = 272;
 #[cfg(feature = "double-precision")]
-const RAGDOLL_HASH: u32 = 0xF7B5_B2D1;
+const RAGDOLL_HASH: u32 = 0xC049_067A;
 #[cfg(feature = "double-precision")]
 const WAVE_PILE_SLEEP_STEP: i32 = 323;
 #[cfg(feature = "double-precision")]
@@ -38,14 +38,14 @@ const QUERY_SPAWN_HIT_COUNT: i32 = 59;
 #[cfg(feature = "double-precision")]
 const QUERY_SPAWN_QUERY_HASH: u32 = 0x5B44_29DC;
 #[cfg(feature = "double-precision")]
-const MESH_DROP_SLEEP_STEP: i32 = 251;
+const MESH_DROP_SLEEP_STEP: i32 = 217;
 #[cfg(feature = "double-precision")]
-const MESH_DROP_HASH: u32 = 0x4653_81C5;
+const MESH_DROP_HASH: u32 = 0xCF94_6437;
 
 #[cfg(not(feature = "double-precision"))]
-const RAGDOLL_SLEEP_STEP: i32 = 272;
+const RAGDOLL_SLEEP_STEP: i32 = 271;
 #[cfg(not(feature = "double-precision"))]
-const RAGDOLL_HASH: u32 = 0xF499_2B41;
+const RAGDOLL_HASH: u32 = 0x8057_19D3;
 #[cfg(not(feature = "double-precision"))]
 const WAVE_PILE_SLEEP_STEP: i32 = 316;
 #[cfg(not(feature = "double-precision"))]
@@ -59,9 +59,9 @@ const QUERY_SPAWN_HIT_COUNT: i32 = 59;
 #[cfg(not(feature = "double-precision"))]
 const QUERY_SPAWN_QUERY_HASH: u32 = 0xE327_1F3D;
 #[cfg(not(feature = "double-precision"))]
-const MESH_DROP_SLEEP_STEP: i32 = 251;
+const MESH_DROP_SLEEP_STEP: i32 = 217;
 #[cfg(not(feature = "double-precision"))]
-const MESH_DROP_HASH: u32 = 0xE58C_7240;
+const MESH_DROP_HASH: u32 = 0x256B_C40B;
 
 // C loops each scenario over several worker counts to prove every schedule reproduces the
 // first run (EnsureRepeatable). The serial port ignores the worker count, so extra runs would

@@ -259,6 +259,12 @@ mod large_world_tests;
 mod determinism_tests;
 
 #[cfg(test)]
+mod restitution_tests;
+
+#[cfg(test)]
+mod restitution_tests_extra;
+
+#[cfg(test)]
 mod recording_tests;
 
 #[cfg(test)]

@@ -237,3 +237,86 @@ fn compound_nested_mesh_blob_validated() {
         );
     }
 }
+
+/// Byte image of the world fat AABB section: the count followed by each AABB.
+fn fat_aabb_section(world: &crate::world::World) -> Vec<u8> {
+    let mut buf = crate::recording::RecBuffer::new();
+    buf.append_i32(world.fat_aabbs.len() as i32);
+    for aabb in &world.fat_aabbs {
+        buf.append_aabb(*aabb);
+    }
+    buf.data
+}
+
+/// The fat AABB snapshot section parallels the shape array. An image whose section count does
+/// not match the shape count must be rejected, even when the rest of the stream stays aligned.
+#[test]
+fn snapshot_fat_aabb_count_mismatch_rejected() {
+    use crate::body::create_body;
+    use crate::recording::{deserialize_into_shell, serialize_world, GeometryRegistry, RecBuffer};
+    use crate::shape::{create_hull_shape, create_sphere_shape};
+    use crate::types::{default_body_def, default_shape_def, default_world_def, BodyType};
+    use crate::world::World;
+
+    let mut world = World::new(&default_world_def());
+    let ground = create_body(&mut world, &default_body_def());
+    let ground_box = make_box_hull(10.0, 1.0, 10.0);
+    create_hull_shape(&mut world, ground, &default_shape_def(), &ground_box.base);
+    for i in 0..3 {
+        let mut body_def = default_body_def();
+        body_def.type_ = BodyType::Dynamic;
+        body_def.position.x = (2.0 * i as f32) as _;
+        body_def.position.y = 3.0 as _;
+        let body = create_body(&mut world, &body_def);
+        let sphere = Sphere {
+            center: VEC3_ZERO,
+            radius: 0.5,
+        };
+        create_sphere_shape(&mut world, body, &default_shape_def(), &sphere);
+    }
+    world.step(1.0 / 60.0, 4);
+
+    let mut registry = GeometryRegistry::new();
+    let mut buf = RecBuffer::new();
+    serialize_world(&world, &mut buf, &mut registry);
+    let bytes = buf.data;
+
+    // Locate the fat AABB section in the image
+    let section = fat_aabb_section(&world);
+    let start = bytes
+        .windows(section.len())
+        .position(|w| w == section.as_slice())
+        .expect("fat AABB section present");
+    assert!(
+        bytes[start + section.len()..]
+            .windows(section.len())
+            .all(|w| w != section.as_slice()),
+        "fat AABB section must be unique"
+    );
+
+    let restore = |image: &[u8]| {
+        let mut slots = registry.to_slots();
+        let mut shell = World::new(&default_world_def());
+        deserialize_into_shell(image, &mut shell, &mut slots)
+    };
+
+    // Baseline image restores
+    assert!(restore(&bytes));
+
+    // Drop the last AABB and its count: the stream stays aligned but no longer parallels the
+    // shape array
+    let shape_count = world.shapes.len();
+    let mut short = bytes.clone();
+    short[start..start + 4].copy_from_slice(&((shape_count - 1) as i32).to_le_bytes());
+    let last = start + section.len() - 24;
+    short.drain(last..last + 24);
+    assert!(!restore(&short), "short fat AABB section was accepted");
+
+    // One extra AABB
+    let mut long = bytes.clone();
+    long[start..start + 4].copy_from_slice(&((shape_count + 1) as i32).to_le_bytes());
+    let end = start + section.len();
+    let extra: Vec<u8> = long[end - 24..end].to_vec();
+    long.splice(end..end, extra);
+    assert!(!restore(&long), "long fat AABB section was accepted");
+}

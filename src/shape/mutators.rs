@@ -47,12 +47,13 @@ pub(crate) fn reset_proxy(
         let proxy_type_ = proxy_type(proxy_key);
         update_shape_aabbs(
             &mut world.shapes[shape_index as usize],
+            &mut world.fat_aabbs[shape_index as usize],
             transform,
             proxy_type_,
         );
 
         if destroy_proxy {
-            let fat_aabb = world.shapes[shape_index as usize].fat_aabb;
+            let fat_aabb = world.fat_aabbs[shape_index as usize];
             let category_bits = world.shapes[shape_index as usize].filter.category_bits;
             world.broad_phase.destroy_proxy(proxy_key);
 
@@ -65,13 +66,14 @@ pub(crate) fn reset_proxy(
                 force_pair_creation,
             );
         } else {
-            let fat_aabb = world.shapes[shape_index as usize].fat_aabb;
+            let fat_aabb = world.fat_aabbs[shape_index as usize];
             world.broad_phase.move_proxy(proxy_key, fat_aabb);
         }
     } else {
         let proxy_type_ = world.bodies[body_id as usize].type_;
         update_shape_aabbs(
             &mut world.shapes[shape_index as usize],
+            &mut world.fat_aabbs[shape_index as usize],
             transform,
             proxy_type_,
         );

@@ -3,7 +3,7 @@
 // SPDX-FileCopyrightText: 2025 Erin Catto
 // SPDX-License-Identifier: MIT
 
-use super::{body_flags, Body, BodySim, IDENTITY_BODY_STATE};
+use super::{body_flags, encode_body_sim_index, Body, BodySim, IDENTITY_BODY_STATE};
 use crate::constants::huge;
 use crate::core::{NULL_INDEX, SECRET_COOKIE};
 use crate::id::{BodyId, NULL_BODY_ID};
@@ -88,12 +88,35 @@ pub fn get_body_state_index(world: &World, body_index: i32) -> Option<i32> {
     }
 }
 
+/// Re-encode the body sim locator on every contact attached to the body.
+/// (b3RefreshBodyContactIndices)
+pub fn refresh_body_contact_indices(world: &mut World, body_index: i32) {
+    let encoded_body_sim_index = encode_body_sim_index(&world.bodies[body_index as usize]);
+
+    let mut contact_key = world.bodies[body_index as usize].head_contact_key;
+    while contact_key != NULL_INDEX {
+        let edge_index = contact_key & 1;
+        let contact_id = contact_key >> 1;
+
+        let contact = &mut world.contacts[contact_id as usize];
+        contact_key = contact.edges[edge_index as usize].next_key;
+
+        if edge_index == 0 {
+            contact.encoded_body_sim_a = encoded_body_sim_index;
+        } else {
+            contact.encoded_body_sim_b = encoded_body_sim_index;
+        }
+    }
+}
+
 /// Sync non-transient flags from Body onto BodySim / BodyState. (b3SyncBodyFlags)
 pub fn sync_body_flags(world: &mut World, body_index: i32) {
     let flags = world.bodies[body_index as usize].flags & !body_flags::BODY_TRANSIENT_FLAGS;
     {
         let sim = get_body_sim_mut(world, body_index);
-        sim.flags = flags;
+
+        // Preserve the fast flag for contact recycling.
+        sim.flags = (sim.flags & body_flags::IS_FAST) | flags;
     }
     if let Some(local_index) = get_body_state_index(world, body_index) {
         world.solver_sets[AWAKE_SET as usize].body_states[local_index as usize].flags = flags;
@@ -467,6 +490,7 @@ pub fn destroy_body(world: &mut World, body_id: BodyId) {
         let moved_body = &mut world.bodies[moved_id as usize];
         debug_assert!(moved_body.local_index == moved);
         moved_body.local_index = local_index;
+        refresh_body_contact_indices(world, moved_id);
     }
 
     if set_index == AWAKE_SET {

@@ -24,7 +24,7 @@ pub mod body_flags {
     pub const LOCK_ANGULAR_Y: u32 = 0x0000_0010;
     /// Fixed rotation around the z-axis
     pub const LOCK_ANGULAR_Z: u32 = 0x0000_0020;
-    /// Used for debug draw
+    /// This flag is used for debug draw and contact recycling. Only lives on BodySim.
     pub const IS_FAST: u32 = 0x0000_0040;
     /// Dynamic body does a final CCD pass against all body types, but not other bullets
     pub const IS_BULLET: u32 = 0x0000_0080;
@@ -34,8 +34,9 @@ pub mod body_flags {
     pub const HAD_TIME_OF_IMPACT: u32 = 0x0000_0200;
     /// No limit on angular velocity
     pub const ALLOW_FAST_ROTATION: u32 = 0x0000_0400;
-    /// Needs AABB increased
-    pub const ENLARGE_BOUNDS: u32 = 0x0000_0800;
+    /// This bullet body needs to have its AABB increased. Needed because bullets don't follow
+    /// the standard broad-phase update.
+    pub const ENLARGE_BULLET_BOUNDS: u32 = 0x0000_0800;
     /// Dynamic so the solver should write to it. Used for BodyState flags.
     pub const DYNAMIC_FLAG: u32 = 0x0000_1000;
     pub const ENABLE_SLEEP: u32 = 0x0000_2000;
@@ -55,7 +56,50 @@ pub mod body_flags {
     pub const FIXED_ROTATION: u32 = LOCK_ANGULAR_X | LOCK_ANGULAR_Y | LOCK_ANGULAR_Z;
 
     /// Transient per time step. May differ across Body, BodySim, and BodyState.
-    pub const BODY_TRANSIENT_FLAGS: u32 = IS_FAST | IS_SPEED_CAPPED | HAD_TIME_OF_IMPACT;
+    pub const BODY_TRANSIENT_FLAGS: u32 = IS_SPEED_CAPPED | HAD_TIME_OF_IMPACT;
+}
+
+/// Encode the body sim index for storage in the contact. (b3EncodeBodySimIndex)
+///
+/// Awake bodies store their local index, static bodies store `-(localIndex + 2)`,
+/// and bodies in any other set store `NULL_INDEX`.
+#[inline]
+pub fn encode_body_sim_index(body: &Body) -> i32 {
+    if body.set_index == crate::solver_set::AWAKE_SET {
+        return body.local_index;
+    }
+
+    if body.set_index == crate::solver_set::STATIC_SET {
+        return -(body.local_index + 2);
+    }
+
+    NULL_INDEX
+}
+
+/// (b3IsStaticSimIndex)
+#[inline]
+pub fn is_static_sim_index(encoded_body_sim_index: i32) -> bool {
+    encoded_body_sim_index < NULL_INDEX
+}
+
+/// (b3DecodeAwakeIndex)
+#[inline]
+pub fn decode_awake_index(encoded_body_sim_index: i32) -> i32 {
+    if encoded_body_sim_index >= 0 {
+        encoded_body_sim_index
+    } else {
+        NULL_INDEX
+    }
+}
+
+/// (b3SleepBodySimIndex)
+#[inline]
+pub fn sleep_body_sim_index(encoded_body_sim_index: i32) -> i32 {
+    if encoded_body_sim_index >= 0 {
+        NULL_INDEX
+    } else {
+        encoded_body_sim_index
+    }
 }
 
 /// Body organizational details that are not used in the solver. (b3Body)

@@ -145,9 +145,10 @@ pub struct Contact {
     /// Back index into World::contacts
     pub contact_id: i32,
 
-    /// Transient and cached for performance. NULL_INDEX for static bodies.
-    pub body_sim_index_a: i32,
-    pub body_sim_index_b: i32,
+    /// Encoded body sim indices to avoid a cache miss accessing the body in the narrow phase.
+    /// Awake: local index. Static: -(local index + 2). Otherwise NULL_INDEX.
+    pub encoded_body_sim_a: i32,
+    pub encoded_body_sim_b: i32,
 
     /// contact_flags bits
     pub flags: u32,
@@ -193,8 +194,8 @@ impl Default for Contact {
             island_id: NULL_INDEX,
             island_index: NULL_INDEX,
             contact_id: NULL_INDEX,
-            body_sim_index_a: NULL_INDEX,
-            body_sim_index_b: NULL_INDEX,
+            encoded_body_sim_a: NULL_INDEX,
+            encoded_body_sim_b: NULL_INDEX,
             flags: 0,
             manifolds: Vec::new(),
             cached_rotation_a: QUAT_IDENTITY,

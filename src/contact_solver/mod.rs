@@ -7,7 +7,6 @@
 //! SPDX-License-Identifier: MIT
 
 mod prepare;
-mod restitution;
 mod solve;
 mod solve_convex;
 mod store;
@@ -21,9 +20,8 @@ use crate::math_functions::{
 use crate::solver::Softness;
 
 pub use prepare::prepare_color_contacts;
-pub use restitution::{apply_restitution, apply_restitution_convex};
-pub use solve::solve_contacts;
-pub use solve_convex::solve_contacts_convex;
+pub use solve::{push_contacts, solve_contacts};
+pub use solve_convex::{push_contacts_convex, solve_contacts_convex};
 pub use store::{flag_hit_events, store_impulses};
 pub use warm_start::{warm_start_contacts, warm_start_contacts_convex};
 
@@ -33,7 +31,8 @@ pub struct ManifoldConstraintPoint {
     pub r_a: Vec3,
     pub r_b: Vec3,
     pub base_separation: f32,
-    pub relative_velocity: f32,
+    /// Positive velocity target for deferred restitution. Zero when the point does not bounce.
+    pub restitution_velocity: f32,
     pub normal_impulse: f32,
     pub total_normal_impulse: f32,
     pub normal_mass: f32,
@@ -99,7 +98,6 @@ pub struct ContactConstraint {
     pub softness: Softness,
     pub rolling_mass: Matrix3,
     pub friction: f32,
-    pub restitution: f32,
     pub rolling_resistance: f32,
     pub manifold_count: i32,
 }
@@ -118,7 +116,6 @@ impl Default for ContactConstraint {
             softness: Softness::default(),
             rolling_mass: MAT3_ZERO,
             friction: 0.0,
-            restitution: 0.0,
             rolling_resistance: 0.0,
             manifold_count: 0,
         }

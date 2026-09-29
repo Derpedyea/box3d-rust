@@ -9,11 +9,11 @@ use crate::core::NULL_INDEX;
 use crate::id::BodyId;
 use crate::island::split_island;
 use crate::math_functions::{
-    aabb_contains, add, conjugate, cross, dot_quat, inv_rotate_vector, is_valid_position,
-    is_valid_quat, is_valid_vec3, is_valid_world_transform, length, length_squared,
-    make_matrix_from_quat, mul, mul_add, mul_mm, mul_mv, mul_quat, mul_sv, negate_quat, normalize,
-    rotate_vector, sub, sub_pos, transform_world_point, transpose, Aabb, Pos, Quat, Vec3,
-    WorldTransform,
+    aabb_contains, aabb_inflate, add, conjugate, cross, dot_quat, inv_rotate_vector,
+    is_valid_position, is_valid_quat, is_valid_vec3, is_valid_world_transform, length,
+    length_squared, make_matrix_from_quat, mul, mul_add, mul_mm, mul_mv, mul_quat, mul_sv,
+    negate_quat, normalize, rotate_vector, sub, sub_pos, transform_world_point, transpose, Pos,
+    Quat, Vec3, WorldTransform,
 };
 use crate::shape::compute_fat_shape_aabb;
 use crate::solver_set::{try_sleep_island, AWAKE_SET, DISABLED_SET, FIRST_SLEEPING_SET};
@@ -219,43 +219,19 @@ pub fn body_set_transform(world: &mut World, body_id: BodyId, position: Pos, rot
 
     let mut shape_id = world.bodies[body_index as usize].head_shape_id;
     while shape_id != NULL_INDEX {
-        let next_shape_id;
-        let aabb;
-        let needs_move;
-        let fat_aabb;
-        let proxy_key;
-        {
-            let shape = &world.shapes[shape_id as usize];
-            next_shape_id = shape.next_shape_id;
-            aabb = compute_fat_shape_aabb(shape, transform, speculative);
-            needs_move = !aabb_contains(shape.fat_aabb, aabb);
-            let margin = shape.aabb_margin;
-            fat_aabb = Aabb {
-                lower_bound: crate::math_functions::Vec3 {
-                    x: aabb.lower_bound.x - margin,
-                    y: aabb.lower_bound.y - margin,
-                    z: aabb.lower_bound.z - margin,
-                },
-                upper_bound: crate::math_functions::Vec3 {
-                    x: aabb.upper_bound.x + margin,
-                    y: aabb.upper_bound.y + margin,
-                    z: aabb.upper_bound.z + margin,
-                },
-            };
-            proxy_key = shape.proxy_key;
-        }
+        let next_shape_id = world.shapes[shape_id as usize].next_shape_id;
+        let aabb = compute_fat_shape_aabb(&world.shapes[shape_id as usize], transform, speculative);
+        world.shapes[shape_id as usize].aabb = aabb;
 
-        {
-            let shape = &mut world.shapes[shape_id as usize];
-            shape.aabb = aabb;
-            if needs_move {
-                shape.fat_aabb = fat_aabb;
+        if !aabb_contains(world.fat_aabbs[shape_id as usize], aabb) {
+            let fat_aabb = aabb_inflate(aabb, world.shapes[shape_id as usize].aabb_margin);
+            world.fat_aabbs[shape_id as usize] = fat_aabb;
+
+            // The body could be disabled
+            let proxy_key = world.shapes[shape_id as usize].proxy_key;
+            if proxy_key != NULL_INDEX {
+                world.broad_phase.move_proxy(proxy_key, fat_aabb);
             }
-        }
-
-        // The body could be disabled
-        if needs_move && proxy_key != NULL_INDEX {
-            world.broad_phase.move_proxy(proxy_key, fat_aabb);
         }
 
         shape_id = next_shape_id;

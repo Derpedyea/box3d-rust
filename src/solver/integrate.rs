@@ -12,10 +12,10 @@ use crate::core::NULL_INDEX;
 use crate::events::BodyMoveEvent;
 use crate::id::BodyId;
 use crate::math_functions::{
-    aabb_contains, abs, add, blend2, dot, integrate_rotation, inv_rotate_vector, invert_matrix,
-    is_valid_vec3, length, make_matrix_from_quat, max_float, modified_cross, mul_add, mul_mm,
-    mul_mv, mul_quat, mul_sv, neg, normalize_quat, offset_pos, rotate_vector, solve3, sub,
-    transpose, Matrix3, Vec3, QUAT_IDENTITY, VEC3_ZERO,
+    aabb_contains, aabb_inflate, abs, blend2, dot, integrate_rotation, inv_rotate_vector,
+    invert_matrix, is_valid_vec3, length, make_matrix_from_quat, max_float, modified_cross,
+    mul_add, mul_mm, mul_mv, mul_quat, mul_sv, neg, normalize_quat, offset_pos, rotate_vector,
+    solve3, sub, transpose, Matrix3, Vec3, QUAT_IDENTITY, VEC3_ZERO,
 };
 use crate::solver_set::AWAKE_SET;
 use crate::types::BodyType;
@@ -244,15 +244,13 @@ pub(super) fn finalize_bodies(
 
         debug_assert!((world.bodies[body_id as usize].flags & body_flags::DIRTY_MASS) == 0);
 
-        {
-            let body = &mut world.bodies[body_id as usize];
-            body.flags &= !body_flags::BODY_TRANSIENT_FLAGS;
-            body.flags |=
-                sim.flags & (body_flags::IS_SPEED_CAPPED | body_flags::HAD_TIME_OF_IMPACT);
-            body.flags |=
-                state.flags & (body_flags::IS_SPEED_CAPPED | body_flags::HAD_TIME_OF_IMPACT);
-        }
-        sim.flags &= !body_flags::BODY_TRANSIENT_FLAGS;
+        // Clear the transient flags (fast, speed capped, had TOI). These flags are conditionally set
+        // as part of the code below.
+        world.bodies[body_id as usize].flags &= !body_flags::BODY_TRANSIENT_FLAGS;
+        sim.flags &= !(body_flags::IS_FAST | body_flags::BODY_TRANSIENT_FLAGS);
+
+        // The body state flag knows about speed capping (used for debug draw).
+        world.bodies[body_id as usize].flags |= state.flags & body_flags::IS_SPEED_CAPPED;
         state.flags &= !body_flags::BODY_TRANSIENT_FLAGS;
 
         let body_flags_now = world.bodies[body_id as usize].flags;
@@ -280,7 +278,7 @@ pub(super) fn finalize_bodies(
                 if (sim.flags & body_flags::IS_BULLET) != 0 {
                     bullet_bodies.push(sim_index as i32);
                 } else {
-                    solve_continuous(world, sim_index as i32);
+                    solve_continuous(world, sim_index as i32, time_step);
                 }
 
                 sim = world.solver_sets[AWAKE_SET as usize].body_sims[sim_index];
@@ -340,22 +338,13 @@ pub(super) fn finalize_bodies(
                 let shape = &mut world.shapes[shape_id as usize];
                 shape.aabb = aabb;
 
-                if !aabb_contains(shape.fat_aabb, aabb) {
-                    let margin = shape.aabb_margin;
-                    let aabb_margin = Vec3 {
-                        x: margin,
-                        y: margin,
-                        z: margin,
-                    };
-                    shape.fat_aabb = crate::math_functions::Aabb {
-                        lower_bound: sub(aabb.lower_bound, aabb_margin),
-                        upper_bound: add(aabb.upper_bound, aabb_margin),
-                    };
+                if !aabb_contains(world.fat_aabbs[shape_id as usize], aabb) {
+                    let fat_aabb = aabb_inflate(aabb, shape.aabb_margin);
+                    world.fat_aabbs[shape_id as usize] = fat_aabb;
 
                     // Mark the hierarchy as moved. (C uses atomic operations here because
                     // finalize runs on many workers; the port is serial.)
                     let proxy_key = shape.proxy_key;
-                    let fat_aabb = shape.fat_aabb;
                     world.broad_phase.mark_proxy_moved(proxy_key, fat_aabb);
                 }
 

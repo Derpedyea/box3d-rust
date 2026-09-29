@@ -73,8 +73,8 @@ impl ConstraintGraph {
 /// Contacts are created non-touching; once touching they enter the graph.
 /// (b3AddContactToGraph)
 pub fn add_contact_to_graph(world: &mut crate::world::World, contact_id: i32) {
+    use crate::body::encode_body_sim_index;
     use crate::contact::contact_flags;
-    use crate::core::NULL_INDEX;
     use crate::types::BodyType;
 
     let contact = &world.contacts[contact_id as usize];
@@ -148,24 +148,16 @@ pub fn add_contact_to_graph(world: &mut crate::world::World, contact_id: i32) {
             .len() as i32
     };
 
-    let local_a = world.bodies[body_id_a as usize].local_index;
-    let local_b = world.bodies[body_id_b as usize].local_index;
+    let encoded_a = encode_body_sim_index(&world.bodies[body_id_a as usize]);
+    let encoded_b = encode_body_sim_index(&world.bodies[body_id_b as usize]);
     let manifold_count = world.contacts[contact_id as usize].manifold_count();
 
     {
         let contact = &mut world.contacts[contact_id as usize];
         contact.color_index = color_index;
         contact.local_index = local_index;
-        contact.body_sim_index_a = if type_a == BodyType::Static {
-            NULL_INDEX
-        } else {
-            local_a
-        };
-        contact.body_sim_index_b = if type_b == BodyType::Static {
-            NULL_INDEX
-        } else {
-            local_b
-        };
+        contact.encoded_body_sim_a = encoded_a;
+        contact.encoded_body_sim_b = encoded_b;
     }
 
     let color = &mut world.constraint_graph.colors[color_index as usize];

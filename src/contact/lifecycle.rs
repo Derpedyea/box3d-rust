@@ -101,6 +101,8 @@ pub fn create_contact(world: &mut World, shape_id_a: i32, shape_id_b: i32, child
     }
 
     let local_index = world.solver_sets[set_index as usize].contact_indices.len() as i32;
+    let encoded_a = crate::body::encode_body_sim_index(&world.bodies[body_id_a as usize]);
+    let encoded_b = crate::body::encode_body_sim_index(&world.bodies[body_id_b as usize]);
 
     {
         let contact = &mut world.contacts[contact_id as usize];
@@ -116,6 +118,8 @@ pub fn create_contact(world: &mut World, shape_id_a: i32, shape_id_b: i32, child
         contact.shape_id_a = shape_id_a;
         contact.shape_id_b = shape_id_b;
         contact.child_index = child_index;
+        contact.encoded_body_sim_a = encoded_a;
+        contact.encoded_body_sim_b = encoded_b;
     }
 
     if (world.bodies[body_id_a as usize].flags & body_flags::BODY_ENABLE_CONTACT_RECYCLING) != 0

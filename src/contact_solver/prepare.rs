@@ -1,10 +1,13 @@
 //! Prepare Mesh contact constraints. (b3PrepareContacts_Mesh)
 //!
+//! The Convex kernels prepare exactly the same per-lane data (b3PrepareContacts_Convex), so
+//! both share this scalar builder.
+//!
 //! SPDX-FileCopyrightText: 2025 Erin Catto
 //! SPDX-License-Identifier: MIT
 
 use super::{ContactConstraint, ManifoldConstraint, ManifoldConstraintPoint};
-use crate::body::{BodySim, BodyState};
+use crate::body::{decode_awake_index, BodySim, BodyState};
 use crate::constants::{speculative_distance, MIN_FRICTION_WEIGHT};
 use crate::contact::{contact_flags, Contact};
 use crate::core::NULL_INDEX;
@@ -14,42 +17,46 @@ use crate::math_functions::{
 };
 use crate::solver::StepContext;
 
+// contact separation for sub-stepping
+// s = s0 + dot(cB + rB - cA - rA, normal)
+// normal is held constant
+// body positions c can translation and anchors r can rotate
+// s(t) = s0 + dot(cB(t) + rB(t) - cA(t) - rA(t), normal)
+// s(t) = s0 + dot(cB0 + dpB + rot(dqB, rB0) - cA0 - dpA - rot(dqA, rA0), normal)
+// s(t) = s0 + dot(cB0 - cA0, normal) + dot(dpB - dpA + rot(dqB, rB0) - rot(dqA, rA0), normal)
+// s_base = s0 + dot(cB0 - cA0, normal)
+
 /// Build one contact constraint from a touching contact. (inner loop of
 /// b3PrepareContacts_Mesh)
+///
+/// Also writes `normal_velocity` onto the contact's manifold points, like C, because
+/// the pre-solve normal velocity is only sampled here (and only when restitution or hit
+/// events need it).
 pub fn prepare_one_contact(
-    contact: &Contact,
+    contact: &mut Contact,
     sims: &[BodySim],
     states: &[BodyState],
     context: &StepContext,
     warm_start_scale: f32,
+    neg_restitution_threshold: f32,
 ) -> ContactConstraint {
-    let index_a = contact.body_sim_index_a;
-    let index_b = contact.body_sim_index_b;
+    let index_a = decode_awake_index(contact.encoded_body_sim_a);
+    let index_b = decode_awake_index(contact.encoded_body_sim_b);
 
-    let (m_a, i_a, v_a, w_a) = if index_a == NULL_INDEX {
-        (0.0, MAT3_ZERO, VEC3_ZERO, VEC3_ZERO)
+    // Body A data
+    let (m_a, i_a) = if index_a == NULL_INDEX {
+        (0.0, MAT3_ZERO)
     } else {
         let sim_a = &sims[index_a as usize];
-        let state_a = &states[index_a as usize];
-        (
-            sim_a.inv_mass,
-            sim_a.inv_inertia_world,
-            state_a.linear_velocity,
-            state_a.angular_velocity,
-        )
+        (sim_a.inv_mass, sim_a.inv_inertia_world)
     };
 
-    let (m_b, i_b, v_b, w_b) = if index_b == NULL_INDEX {
-        (0.0, MAT3_ZERO, VEC3_ZERO, VEC3_ZERO)
+    // Body B data
+    let (m_b, i_b) = if index_b == NULL_INDEX {
+        (0.0, MAT3_ZERO)
     } else {
         let sim_b = &sims[index_b as usize];
-        let state_b = &states[index_b as usize];
-        (
-            sim_b.inv_mass,
-            sim_b.inv_inertia_world,
-            state_b.linear_velocity,
-            state_b.angular_velocity,
-        )
+        (sim_b.inv_mass, sim_b.inv_inertia_world)
     };
 
     // Used for friction center weighting.
@@ -74,13 +81,36 @@ pub fn prepare_one_contact(
         softness,
         rolling_mass: invert_matrix(add_mm(i_a, i_b)),
         friction: contact.friction,
-        restitution: contact.restitution,
         rolling_resistance: contact.rolling_resistance,
         manifold_count,
     };
 
+    // Only sample contact point normal velocity if needed.
+    let restitution = contact.restitution;
+    let hit_events = (contact.flags & contact_flags::SIM_ENABLE_HIT_EVENT) != 0;
+    let sample_velocity = restitution > 0.0 || hit_events;
+
+    let mut v_a = VEC3_ZERO;
+    let mut w_a = VEC3_ZERO;
+    let mut v_b = VEC3_ZERO;
+    let mut w_b = VEC3_ZERO;
+
+    if sample_velocity {
+        if index_a != NULL_INDEX {
+            v_a = states[index_a as usize].linear_velocity;
+            w_a = states[index_a as usize].angular_velocity;
+        }
+
+        if index_b != NULL_INDEX {
+            v_b = states[index_b as usize].linear_velocity;
+            w_b = states[index_b as usize].angular_velocity;
+        }
+    }
+
+    let tangent_velocity = contact.tangent_velocity;
+
     for manifold_index in 0..manifold_count as usize {
-        let manifold = &contact.manifolds[manifold_index];
+        let manifold = &mut contact.manifolds[manifold_index];
         let point_count = manifold.point_count;
         let normal = manifold.normal;
         let tangent1 = perp(normal);
@@ -91,8 +121,8 @@ pub fn prepare_one_contact(
             normal,
             tangent1,
             tangent2,
-            tangent_velocity1: dot(contact.tangent_velocity, tangent1),
-            tangent_velocity2: dot(contact.tangent_velocity, tangent2),
+            tangent_velocity1: dot(tangent_velocity, tangent1),
+            tangent_velocity2: dot(tangent_velocity, tangent2),
             ..ManifoldConstraint::default()
         };
 
@@ -101,7 +131,8 @@ pub fn prepare_one_contact(
         let mut total_friction_weight = 0.0;
 
         for point_index in 0..point_count as usize {
-            let mp = &manifold.points[point_index];
+            // Copy data from manifold point
+            let mp = &mut manifold.points[point_index];
             let s = mp.separation;
             let mut cp = ManifoldConstraintPoint {
                 r_a: mp.anchor_a,
@@ -120,9 +151,22 @@ pub fn prepare_one_contact(
             let k_normal = m_a + m_b + dot(rn_a, mul_mv(i_a, rn_a)) + dot(rn_b, mul_mv(i_b, rn_b));
             cp.normal_mass = if k_normal > 0.0 { 1.0 / k_normal } else { 0.0 };
 
-            let vr_a = add(v_a, cross(w_a, r_a));
-            let vr_b = add(v_b, cross(w_b, r_b));
-            cp.relative_velocity = dot(normal, sub(vr_b, vr_a));
+            // Only compute the normal velocity terms if needed.
+            if sample_velocity {
+                let vr_a = add(v_a, cross(w_a, r_a));
+                let vr_b = add(v_b, cross(w_b, r_b));
+                let vn = dot(normal, sub(vr_b, vr_a));
+
+                cp.restitution_velocity = if vn < neg_restitution_threshold {
+                    -restitution * vn
+                } else {
+                    0.0
+                };
+                mp.normal_velocity = if hit_events { vn } else { 0.0 };
+            } else {
+                cp.restitution_velocity = 0.0;
+                mp.normal_velocity = 0.0;
+            }
 
             // C0 friction center decay. Needed to prevent spinning top drift (GyroscopicPrecession sample).
             // Contacts with separation greater than twice the speculative distance only matter for CCD and
@@ -189,7 +233,7 @@ pub fn prepare_color_contacts(
     constraints: &mut Vec<ContactConstraint>,
     convex_ids: &[i32],
     mesh_specs: &[crate::contact::ContactSpec],
-    contacts: &[Contact],
+    contacts: &mut [Contact],
     sims: &[BodySim],
     states: &[BodyState],
     context: &StepContext,
@@ -199,12 +243,13 @@ pub fn prepare_color_contacts(
     } else {
         0.0
     };
+    let neg_restitution_threshold = -context.restitution_threshold;
 
     constraints.clear();
     constraints.reserve(convex_ids.len() + mesh_specs.len());
 
     for &contact_id in convex_ids {
-        let contact = &contacts[contact_id as usize];
+        let contact = &mut contacts[contact_id as usize];
         debug_assert!(contact.contact_id == contact_id);
         debug_assert!(contact.manifold_count() == 1);
         constraints.push(prepare_one_contact(
@@ -213,13 +258,14 @@ pub fn prepare_color_contacts(
             states,
             context,
             warm_start_scale,
+            neg_restitution_threshold,
         ));
     }
 
     let convex_count = constraints.len();
 
     for spec in mesh_specs {
-        let contact = &contacts[spec.contact_id as usize];
+        let contact = &mut contacts[spec.contact_id as usize];
         debug_assert!(contact.contact_id == spec.contact_id);
         constraints.push(prepare_one_contact(
             contact,
@@ -227,6 +273,7 @@ pub fn prepare_color_contacts(
             states,
             context,
             warm_start_scale,
+            neg_restitution_threshold,
         ));
     }
 

@@ -166,13 +166,8 @@ pub fn body_set_type(world: &mut World, body_id: BodyId, type_: BodyType) {
         {
             let (shapes, broad_phase) = (&mut world.shapes, &mut world.broad_phase);
             destroy_shape_proxy(&mut shapes[shape_id as usize], broad_phase);
-            create_shape_proxy(
-                &mut shapes[shape_id as usize],
-                broad_phase,
-                type_,
-                transform,
-                true,
-            );
+            let force_pair_creation = true;
+            create_shape_proxy(world, shape_id, type_, transform, force_pair_creation);
         }
 
         shape_id = next_shape_id;
@@ -307,16 +302,7 @@ pub fn body_enable(world: &mut World, body_id: BodyId) {
     let mut shape_id = world.bodies[body_index as usize].head_shape_id;
     while shape_id != NULL_INDEX {
         let next_shape_id = world.shapes[shape_id as usize].next_shape_id;
-        {
-            let (shapes, broad_phase) = (&mut world.shapes, &mut world.broad_phase);
-            create_shape_proxy(
-                &mut shapes[shape_id as usize],
-                broad_phase,
-                proxy_type,
-                transform,
-                true,
-            );
-        }
+        create_shape_proxy(world, shape_id, proxy_type, transform, true);
         shape_id = next_shape_id;
     }
 

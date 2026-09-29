@@ -16,18 +16,21 @@ use crate::geometry::{
 use crate::height_field::compute_height_field_aabb;
 use crate::hull::{compute_hull_aabb, compute_hull_extent, compute_hull_mass};
 use crate::math_functions::{
-    aabb_center, abs, add, lerp, max, min_float, sub, Aabb, Transform, Vec3, WorldTransform,
-    TRANSFORM_IDENTITY, VEC3_ZERO,
+    aabb_center, aabb_inflate, abs, add, lerp, max, min_float, sub, Aabb, Transform, Vec3,
+    WorldTransform, TRANSFORM_IDENTITY, VEC3_ZERO,
 };
 use crate::mesh::compute_mesh_aabb;
 use crate::types::BodyType;
+use crate::world::World;
 
 use super::ShapeGeometry;
 
 /// Compute the shape AABB and fat AABB with speculative and movement margins.
+/// The fat AABB lives in `World::fat_aabbs`, parallel to the shape array.
 /// (static b3UpdateShapeAABBs)
 pub(crate) fn update_shape_aabbs(
     shape: &mut Shape,
+    fat_aabb: &mut Aabb,
     transform: WorldTransform,
     proxy_type_: BodyType,
 ) {
@@ -43,35 +46,33 @@ pub(crate) fn update_shape_aabbs(
     } else {
         aabb_margin
     };
-    shape.fat_aabb = Aabb {
-        lower_bound: Vec3 {
-            x: aabb.lower_bound.x - margin,
-            y: aabb.lower_bound.y - margin,
-            z: aabb.lower_bound.z - margin,
-        },
-        upper_bound: Vec3 {
-            x: aabb.upper_bound.x + margin,
-            y: aabb.upper_bound.y + margin,
-            z: aabb.upper_bound.z + margin,
-        },
-    };
+    *fat_aabb = aabb_inflate(aabb, margin);
 }
 
 /// (b3CreateShapeProxy)
 pub fn create_shape_proxy(
-    shape: &mut Shape,
-    bp: &mut BroadPhase,
+    world: &mut World,
+    shape_id: i32,
     type_: BodyType,
     transform: WorldTransform,
     force_pair_creation: bool,
 ) {
+    let World {
+        shapes,
+        fat_aabbs,
+        broad_phase,
+        ..
+    } = world;
+    let shape = &mut shapes[shape_id as usize];
     debug_assert!(shape.proxy_key == NULL_INDEX);
 
-    update_shape_aabbs(shape, transform, type_);
+    let fat_aabb = &mut fat_aabbs[shape.id as usize];
+    update_shape_aabbs(shape, fat_aabb, transform, type_);
 
-    shape.proxy_key = bp.create_proxy(
+    // Create proxies in the broad-phase.
+    shape.proxy_key = broad_phase.create_proxy(
         type_,
-        shape.fat_aabb,
+        *fat_aabb,
         shape.filter.category_bits,
         shape.id,
         force_pair_creation,

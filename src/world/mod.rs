@@ -61,7 +61,7 @@ use crate::id::ShapeId;
 use crate::id_pool::IdPool;
 use crate::island::Island;
 use crate::joint::Joint;
-use crate::math_functions::Vec3;
+use crate::math_functions::{Aabb, Vec3};
 use crate::name_cache::NameCache;
 use crate::sensor::{Sensor, SensorHit, SensorTaskContext};
 use crate::shape::Shape;
@@ -99,7 +99,6 @@ pub struct Profile {
     pub solve_impulses: f32,
     pub integrate_positions: f32,
     pub relax_impulses: f32,
-    pub apply_restitution: f32,
     pub store_impulses: f32,
     pub split_islands: f32,
     pub transforms: f32,
@@ -235,6 +234,10 @@ pub struct World {
 
     /// Sparse array of shapes.
     pub shapes: Vec<Shape>,
+
+    /// This follows the shape array and is split out for the hot path in the narrow phase.
+    /// (b3World::fatAABBs)
+    pub fat_aabbs: Vec<Aabb>,
 
     /// Compound shapes are static only, so only the broad-phase static pass can meet one.
     /// This lets a world without compounds skip the shape type read in the pair batch.
@@ -454,6 +457,7 @@ impl World {
             islands: Vec::with_capacity(max_int(16, def.capacity.dynamic_body_count) as usize),
             shape_id_pool: IdPool::new(),
             shapes: Vec::with_capacity(shape_capacity),
+            fat_aabbs: Vec::with_capacity(shape_capacity),
             compound_shape_count: 0,
             hull_database: HullDatabase::new(),
             names: NameCache::new(),

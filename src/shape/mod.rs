@@ -93,7 +93,6 @@ pub struct Shape {
     pub aabb_margin: f32,
 
     pub aabb: Aabb,
-    pub fat_aabb: Aabb,
     pub local_centroid: Vec3,
 
     /// Inline material for single-material shapes.
@@ -227,7 +226,6 @@ impl Default for Shape {
             explosion_scale: 1.0,
             aabb_margin: 0.0,
             aabb: BOUNDS3_EMPTY,
-            fat_aabb: BOUNDS3_EMPTY,
             local_centroid: VEC3_ZERO,
             material: SurfaceMaterial::default(),
             materials: Vec::new(),

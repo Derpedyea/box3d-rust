@@ -13,6 +13,7 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
 - `47d7f7c` clockwise option, joint is awake (#130)
 - `954cf87` Fixes (#157)
 - `f555ee4` Optimize Broad-Phase (#159)
+- `9e5a4cd` Optimizations (#161)
 
 ### Breaking
 
@@ -94,6 +95,33 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
   list, proxy capacity and free list, DFS order flag, nodes and parents up to
   the node end, the proxies, and `World::compound_shape_count`; the move
   buffer is gone. Older snapshots are rejected.
+- Shape fat AABBs move out of `Shape` into the parallel `World::fat_aabbs`
+  array (upstream `9e5a4cd`); `Shape::fat_aabb` is removed and
+  `create_shape_proxy` now takes the world and a shape id.
+- `Contact::body_sim_index_a/b` are replaced by the persistent
+  `encoded_body_sim_a/b` locators (awake: local index, static:
+  `-(local index + 2)`, otherwise `NULL_INDEX`), maintained by the new
+  `refresh_body_contact_indices` and the wake, sleep, transfer, destroy, and
+  graph paths. New helpers `encode_body_sim_index`, `is_static_sim_index`,
+  `decode_awake_index`, and `sleep_body_sim_index`.
+- `body_flags::ENLARGE_BOUNDS` is renamed `ENLARGE_BULLET_BOUNDS` and is only
+  set for bullets; `IS_FAST` is no longer a transient body flag and only lives
+  on `BodySim`.
+- The restitution solver stage is gone: `RESTITUTION_ITERATIONS`,
+  `Profile::apply_restitution`, `apply_restitution`, and
+  `apply_restitution_convex` are removed, and `ContactConstraint::restitution`
+  is removed. `ManifoldConstraintPoint::relative_velocity` becomes
+  `restitution_velocity`. The contact kernels split into `push_contacts` /
+  `push_contacts_convex` (biased) and `solve_contacts` /
+  `solve_contacts_convex` (relax with deferred restitution); none take a
+  `use_bias` flag. `prepare_color_contacts` takes the contacts mutably.
+- `Counters::byte_count` is `i64` and is now the first field (upstream
+  `b3Counters` layout). The port has no allocator hooks, so upstream's
+  `b3AllocFcn` / `b3FreeFcn` / `b3GetByteCount` signature changes have no Rust
+  counterpart.
+- Recording format minor version advances to 7 and the world snapshot version
+  to 7 (upstream `9e5a4cd`): snapshots store `World::fat_aabbs` after the
+  shapes and keep the contact body sim locators. Older snapshots are rejected.
 
 ### Changed
 
@@ -145,9 +173,31 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
   subtrees; the solver refits the kinematic and dynamic trees with a sweep
   over the moved marks instead of enlarging proxies one by one. Bullets only
   enlarge a proxy when the tree box no longer contains the shape's fat box.
+- Same-step restitution (upstream `9e5a4cd`): the bounce is armed in prepare
+  from the pre-solve normal velocity and solved inside the relax pass, which
+  sweeps the normal constraints once per manifold point while a bounce is
+  armed and retires it once every bouncing point separates. The convex path
+  makes the sweep count and the rolling resistance decision per group of four
+  contacts, like upstream's wide constraints. `ManifoldPoint::total_normal_impulse`
+  now only accumulates in the relax pass and includes the restitution impulse.
+- `ManifoldPoint::normal_velocity` is only computed when hit events are
+  enabled on the contact (zero otherwise), and is written during prepare.
+- Continuous collision returns the gravity lost to the time of impact (the
+  fraction of the step cut short), respecting linear motion locks.
+- Contacts cache `base_separation` only while touching.
+- The narrow phase resolves body sims through the contact locators and tests
+  proxy overlap on `World::fat_aabbs`.
+- Debug draw contact forces no longer halve the total normal impulse.
+- Finalize clears the transient flags on the body and sim up front and only
+  copies speed capping back to the body; `HAD_TIME_OF_IMPACT` stays on the
+  sim.
+- The ragdoll and mesh-drop determinism goldens change and match upstream in
+  both precision modes.
 
 ### Fixed
 
+- Overflow-color contacts now flag hit events, like upstream's
+  `b3StoreImpulses_Overflow` (the port only flagged graph-color contacts).
 - Body extents (upstream `47d7f7c`): capsule and sphere `max_extent` now
   bound the shape about the center of mass on every axis (the capsule used a
   signed max, the sphere subtracted the local center twice), and mesh extents

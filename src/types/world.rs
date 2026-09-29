@@ -196,6 +196,7 @@ impl Default for RayResult {
 /// allocator, and no task system in the serial Rust implementation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Counters {
+    pub byte_count: i64,
     pub body_count: i32,
     pub shape_count: i32,
     pub contact_count: i32,
@@ -207,7 +208,6 @@ pub struct Counters {
     pub tree_height: i32,
     pub sat_call_count: i32,
     pub sat_cache_hit_count: i32,
-    pub byte_count: i32,
     pub task_count: i32,
     pub color_counts: [i32; crate::constants::GRAPH_COLOR_COUNT as usize],
     pub manifold_counts: [i32; crate::constants::CONTACT_MANIFOLD_COUNT_BUCKETS],
@@ -216,9 +216,13 @@ pub struct Counters {
     pub awake_contact_count: i32,
     /// Number of contacts recycled in the most recent step.
     pub recycled_contact_count: i32,
-    /// Maximum number of time of impact iterations
+    /// Maximum number of time of impact outer iterations
     pub distance_iterations: i32,
+
+    /// Maximum TOI push backs.
     pub push_back_iterations: i32,
+
+    /// Maximum TOI root solver iterations.
     pub root_iterations: i32,
 }
 

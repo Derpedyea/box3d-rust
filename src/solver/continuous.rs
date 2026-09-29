@@ -10,8 +10,8 @@ use crate::dynamic_tree::DEFAULT_MASK_BITS;
 use crate::geometry::ShapeType;
 use crate::id::ShapeId;
 use crate::math_functions::{
-    aabb_contains, aabb_union, add, lerp, max_int, nlerp, offset_aabb, offset_pos, rotate_vector,
-    sub, sub_pos, transform_point, Aabb, Pos, Transform, Vec3, WorldTransform,
+    aabb_contains, aabb_inflate, aabb_union, add, lerp, max_int, mul_sv, nlerp, offset_aabb,
+    offset_pos, rotate_vector, sub, sub_pos, transform_point, Aabb, Pos, Transform, WorldTransform,
 };
 use crate::sensor::SensorHit;
 use crate::shape::{
@@ -204,7 +204,7 @@ fn query_tree_shape_ids(world: &World, tree_type: BodyType, swept_box: Aabb) -> 
 }
 
 /// Continuous collision of a fast dynamic body. (b3SolveContinuous)
-pub(super) fn solve_continuous(world: &mut World, body_sim_index: i32) {
+pub(super) fn solve_continuous(world: &mut World, body_sim_index: i32, dt: f32) {
     let speculative = crate::constants::speculative_distance();
     let sim_index = body_sim_index as usize;
 
@@ -310,69 +310,89 @@ pub(super) fn solve_continuous(world: &mut World, body_sim_index: i32) {
             sim.rotation0 = q;
             sim.center0 = center;
         }
+
+        // Timeloss means there is a lost gravity contribution. Other forces and torques are ignored for now.
+        {
+            let gravity_scale =
+                world.solver_sets[AWAKE_SET as usize].body_sims[sim_index].gravity_scale;
+            let gravity = world.gravity;
+            let fast_body_state = &mut world.solver_sets[AWAKE_SET as usize].body_states[sim_index];
+            let v = fast_body_state.linear_velocity;
+            let time_loss = (1.0 - ctx.fraction) * dt;
+            let mut dv = mul_sv(-time_loss * gravity_scale, gravity);
+            let flags = fast_body_state.flags;
+            dv.x = if (flags & body_flags::LOCK_LINEAR_X) != 0 {
+                0.0
+            } else {
+                dv.x
+            };
+            dv.y = if (flags & body_flags::LOCK_LINEAR_Y) != 0 {
+                0.0
+            } else {
+                dv.y
+            };
+            dv.z = if (flags & body_flags::LOCK_LINEAR_Z) != 0 {
+                0.0
+            } else {
+                dv.z
+            };
+            fast_body_state.linear_velocity = add(v, dv);
+        }
+
+        // The move event was written before CCD, so correct it with the impact pose
         world.body_move_events[sim_index].transform = transform;
 
+        // Prepare AABBs for broad-phase.
+        // Even though a body is fast, it may not move much. So the AABB may not need enlargement.
         let mut shape_id = world.bodies[fast_body_id as usize].head_shape_id;
         while shape_id != NULL_INDEX {
+            // Must recompute aabb at the interpolated transform
             let aabb =
                 compute_fat_shape_aabb(&world.shapes[shape_id as usize], transform, speculative);
-            let shape = &mut world.shapes[shape_id as usize];
-            shape.aabb = aabb;
+            world.shapes[shape_id as usize].aabb = aabb;
 
-            if !aabb_contains(shape.fat_aabb, aabb) {
-                let margin = shape.aabb_margin;
-                let aabb_margin = Vec3 {
-                    x: margin,
-                    y: margin,
-                    z: margin,
-                };
-                shape.fat_aabb = Aabb {
-                    lower_bound: sub(aabb.lower_bound, aabb_margin),
-                    upper_bound: add(aabb.upper_bound, aabb_margin),
-                };
-                let proxy_key = shape.proxy_key;
-                let fat_aabb = shape.fat_aabb;
-
-                world.solver_sets[AWAKE_SET as usize].body_sims[sim_index].flags |=
-                    body_flags::ENLARGE_BOUNDS;
+            if !aabb_contains(world.fat_aabbs[shape_id as usize], aabb) {
+                let fat_aabb = aabb_inflate(aabb, world.shapes[shape_id as usize].aabb_margin);
+                world.fat_aabbs[shape_id as usize] = fat_aabb;
 
                 // Regular bodies mark the hierarchy as moved using atomic operations.
                 // Bullets are handled separately at a later stage.
                 if !is_bullet {
+                    let proxy_key = world.shapes[shape_id as usize].proxy_key;
                     world.broad_phase.mark_proxy_moved(proxy_key, fat_aabb);
+                } else {
+                    world.solver_sets[AWAKE_SET as usize].body_sims[sim_index].flags |=
+                        body_flags::ENLARGE_BULLET_BOUNDS;
                 }
             }
             shape_id = world.shapes[shape_id as usize].next_shape_id;
         }
     } else {
+        // No time of impact event
+
+        // Advance body
         {
             let sim = &mut world.solver_sets[AWAKE_SET as usize].body_sims[sim_index];
             sim.rotation0 = sim.transform.q;
             sim.center0 = sim.center;
         }
 
+        // Prepare AABBs for broad-phase
         let mut shape_id = world.bodies[fast_body_id as usize].head_shape_id;
         while shape_id != NULL_INDEX {
-            let shape = &mut world.shapes[shape_id as usize];
-            if !aabb_contains(shape.fat_aabb, shape.aabb) {
-                let margin = shape.aabb_margin;
-                let aabb_margin = Vec3 {
-                    x: margin,
-                    y: margin,
-                    z: margin,
-                };
-                shape.fat_aabb = Aabb {
-                    lower_bound: sub(shape.aabb.lower_bound, aabb_margin),
-                    upper_bound: add(shape.aabb.upper_bound, aabb_margin),
-                };
-                let proxy_key = shape.proxy_key;
-                let fat_aabb = shape.fat_aabb;
-
-                world.solver_sets[AWAKE_SET as usize].body_sims[sim_index].flags |=
-                    body_flags::ENLARGE_BOUNDS;
+            // shape->aabb is still valid from above
+            let shape_aabb = world.shapes[shape_id as usize].aabb;
+            if !aabb_contains(world.fat_aabbs[shape_id as usize], shape_aabb) {
+                let fat_aabb =
+                    aabb_inflate(shape_aabb, world.shapes[shape_id as usize].aabb_margin);
+                world.fat_aabbs[shape_id as usize] = fat_aabb;
 
                 if !is_bullet {
+                    let proxy_key = world.shapes[shape_id as usize].proxy_key;
                     world.broad_phase.mark_proxy_moved(proxy_key, fat_aabb);
+                } else {
+                    world.solver_sets[AWAKE_SET as usize].body_sims[sim_index].flags |=
+                        body_flags::ENLARGE_BULLET_BOUNDS;
                 }
             }
             shape_id = world.shapes[shape_id as usize].next_shape_id;

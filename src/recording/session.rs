@@ -20,8 +20,8 @@ pub const REC_MAGIC: u32 = 0x4352_3342;
 /// Major version 6 widened the body def with the safety factor.
 pub const REC_VERSION_MAJOR: u16 = 6;
 /// Minor recording version. (B3_REC_VERSION_MINOR)
-/// Minor version 6 moved the broad phase to the tree against tree pair traversal
-pub const REC_VERSION_MINOR: u16 = 6;
+/// Minor version 7 made the contact body sim locators persistent
+pub const REC_VERSION_MINOR: u16 = 7;
 
 /// Maximum query name length. Query names longer than this probably indicate a
 /// bug in user code. (B3_MAX_QUERY_NAME_LENGTH)

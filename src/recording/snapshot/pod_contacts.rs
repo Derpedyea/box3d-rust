@@ -16,7 +16,6 @@ use crate::contact::{
     contact_flags, Contact, ContactCache, ContactEdge, ContactGeometry, ContactSpec, ConvexContact,
     MeshContact, TriangleCache,
 };
-use crate::core::NULL_INDEX;
 use crate::distance::SimplexCache;
 use crate::geometry::ShapeType;
 use crate::height_field::convert_bytes_to_height_field;
@@ -193,7 +192,6 @@ fn ser_shape_scalars(buf: &mut RecBuffer, s: &Shape) {
     buf.append_f32(s.explosion_scale);
     buf.append_f32(s.aabb_margin);
     buf.append_aabb(s.aabb);
-    buf.append_aabb(s.fat_aabb);
     buf.append_vec3(s.local_centroid);
     buf.append_material(s.material);
     buf.append_filter(s.filter);
@@ -351,7 +349,6 @@ fn des_shape_scalars(r: &mut SnapReader<'_>) -> Shape {
         explosion_scale: r.f32(),
         aabb_margin: r.f32(),
         aabb: r.aabb(),
-        fat_aabb: r.aabb(),
         local_centroid: r.vec3(),
         material: r.material(),
         materials: Vec::new(),
@@ -435,8 +432,8 @@ fn ser_contact_scalars(buf: &mut RecBuffer, c: &Contact) {
     buf.append_i32(c.island_id);
     buf.append_i32(c.island_index);
     buf.append_i32(c.contact_id);
-    buf.append_i32(NULL_INDEX); // body_sim_index_a scrubbed
-    buf.append_i32(NULL_INDEX); // body_sim_index_b scrubbed
+    buf.append_i32(c.encoded_body_sim_a);
+    buf.append_i32(c.encoded_body_sim_b);
     buf.append_u32(c.flags);
     buf.append_quat(c.cached_rotation_a);
     buf.append_quat(c.cached_rotation_b);
@@ -529,8 +526,8 @@ fn des_contact_scalars(r: &mut SnapReader<'_>) -> Contact {
     let island_id = r.i32();
     let island_index = r.i32();
     let contact_id = r.i32();
-    let _bsa = r.i32();
-    let _bsb = r.i32();
+    let encoded_body_sim_a = r.i32();
+    let encoded_body_sim_b = r.i32();
     let flags = r.u32();
     let cached_rotation_a = r.quat();
     let cached_rotation_b = r.quat();
@@ -560,8 +557,8 @@ fn des_contact_scalars(r: &mut SnapReader<'_>) -> Contact {
         island_id,
         island_index,
         contact_id,
-        body_sim_index_a: NULL_INDEX,
-        body_sim_index_b: NULL_INDEX,
+        encoded_body_sim_a,
+        encoded_body_sim_b,
         flags,
         manifolds: Vec::new(),
         cached_rotation_a,
@@ -626,5 +623,36 @@ pub fn des_graph_color(
         joint_sims,
         convex_contacts,
         contacts,
+    }
+}
+
+/// Fat AABB array that parallels the shape array. (b3SerPodArray( buf, world->fatAABBs ))
+pub fn ser_fat_aabbs(buf: &mut RecBuffer, world: &World) {
+    buf.append_i32(world.fat_aabbs.len() as i32);
+    for aabb in &world.fat_aabbs {
+        buf.append_aabb(*aabb);
+    }
+}
+
+/// (b3DesPodArray( r, world->fatAABBs ))
+pub fn des_fat_aabbs(r: &mut SnapReader<'_>, world: &mut World) {
+    const AABB_BYTES: i32 = 24;
+    let count = r.i32();
+    if r.ok && !r.check_count(count, AABB_BYTES, AABB_BYTES) {
+        r.ok = false;
+    }
+
+    // The fat AABBs parallel the shape array, so a mismatched count is a corrupt image. C's
+    // generic b3DesPodArray does not check this; the port rejects it rather than index past
+    // the array later.
+    if r.ok && count as usize != world.shapes.len() {
+        r.ok = false;
+    }
+    world.fat_aabbs.clear();
+    if r.ok && count > 0 {
+        world.fat_aabbs.reserve(count as usize);
+        for _ in 0..count {
+            world.fat_aabbs.push(r.aabb());
+        }
     }
 }

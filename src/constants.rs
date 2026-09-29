@@ -105,10 +105,6 @@ pub const MAX_SHAPE_CAST_POINTS: usize = MAX_HULL_VERTICES as usize;
 /// ported as a constant branch on this value so both paths stay faithful to C.
 pub const MAX_MANIFOLD_POINTS: usize = 4;
 
-/// Increase this if your application needs more accurate restitution. Doing so will
-/// slow down the simulation. Must be 1 or more. (B3_RESTITUTION_ITERATIONS)
-pub const RESTITUTION_ITERATIONS: i32 = 1;
-
 /// Max clip points written per triangle during mesh narrow phase.
 /// (B3_MAX_POINTS_PER_TRIANGLE)
 pub const MAX_POINTS_PER_TRIANGLE: usize = 32;

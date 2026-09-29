@@ -25,15 +25,19 @@ use pods::*;
 /// Snapshot image magic 'BNS3'. (B3_SNAP_MAGIC)
 pub const SNAP_MAGIC: u32 = 0x3353_4E42;
 /// Snapshot format version — v2 added the name cache, v3 added `Body::safety_factor`, v5
-/// moved the broad phase to the tree against tree pair traversal (move buffer removed).
+/// moved the broad phase to the tree against tree pair traversal (move buffer removed), v7
+/// split the fat AABBs into a world array and kept the contact body sim locators (same-step
+/// restitution).
 /// (B3_SNAP_VERSION)
-pub const SNAP_VERSION: u32 = 5;
+pub const SNAP_VERSION: u32 = 7;
 /// Rust field-layout version — bump when serialized record layouts change.
 /// v2: `Body` record gained `safety_factor` (C gets the equivalent change for free because
 /// b3ComputeLayoutHash hashes `sizeof( b3Body )`).
 /// v3: the tree record gained parents and proxies with the new 32-byte node (C: sizeof(
 /// b3TreeNode ) changes and b3ComputeLayoutHash mixes in sizeof( b3TreeProxy )).
-pub const SNAP_LAYOUT_VERSION: u32 = 3;
+/// v4: the shape record lost `fat_aabb` (now the `World::fat_aabbs` section) and the contact
+/// record stores the encoded body sim locators (C: sizeof( b3Shape ) changes).
+pub const SNAP_LAYOUT_VERSION: u32 = 4;
 
 pub const SNAP_FLAG_VALIDATION: u32 = 0x1;
 pub const SNAP_FLAG_DOUBLE_PRECISION: u32 = 0x2;
@@ -99,6 +103,7 @@ pub fn serialize_world(world: &World, buf: &mut RecBuffer, registry: &mut Geomet
     }
 
     ser_shapes(buf, world, registry);
+    ser_fat_aabbs(buf, world);
     ser_contacts(buf, world);
 
     buf.append_i32(world.joints.len() as i32);
@@ -265,6 +270,11 @@ pub fn deserialize_into_shell(
     }
 
     des_shapes(&mut r, world, slots);
+    if !r.ok {
+        return false;
+    }
+
+    des_fat_aabbs(&mut r, world);
     if !r.ok {
         return false;
     }

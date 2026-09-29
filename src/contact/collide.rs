@@ -8,23 +8,23 @@
 use super::contact_flags;
 use super::{destroy_contact, update_contact};
 use crate::bitset::BitSet;
-use crate::body::body_flags;
+use crate::body::{body_flags, is_static_sim_index, BodySim};
 use crate::constants::{
     speculative_distance, CONTACT_MANIFOLD_COUNT_BUCKETS, CONTACT_RECYCLE_ANGULAR_DISTANCE,
     GRAPH_COLOR_COUNT,
 };
 use crate::constraint_graph::{add_contact_to_graph, remove_contact_from_graph};
 use crate::core::{ctz64, NULL_INDEX};
+use crate::dynamic_tree::overlap_v;
 use crate::events::{ContactBeginTouchEvent, ContactEndTouchEvent};
 use crate::id::{ContactId, ShapeId};
 use crate::island::{link_contact, unlink_contact};
 use crate::math_functions::{
-    aabb_overlaps, abs, conjugate, distance_squared, dot, dot_quat, inv_mul_quat,
-    inv_mul_world_transforms, length_squared, make_matrix_from_quat, max, min_float, min_int,
-    mul_mv, mul_quat, sub, sub_pos, Vec3,
+    abs, conjugate, distance_squared, dot, dot_quat, inv_mul_quat, inv_mul_world_transforms,
+    length_squared, make_matrix_from_quat, max, min_float, min_int, mul_mv, mul_quat, sub, sub_pos,
+    Vec3,
 };
 use crate::solver_set::{AWAKE_SET, STATIC_SET};
-use crate::types::BodyType;
 use crate::world::World;
 
 /// Modified cross used by contact recycling (simd.h b3ModifiedCross scalar).
@@ -44,12 +44,27 @@ fn add_non_touching_contact(world: &mut World, contact_id: i32) {
         let contact = &mut world.contacts[contact_id as usize];
         contact.color_index = NULL_INDEX;
         contact.local_index = local_index;
-        contact.body_sim_index_a = NULL_INDEX;
-        contact.body_sim_index_b = NULL_INDEX;
     }
     world.solver_sets[AWAKE_SET as usize]
         .contact_indices
         .push(contact_id);
+}
+
+/// Resolve a contact body sim from the encoded locator. Awake and static bodies are found
+/// directly; any other set (a non-touching contact against a sleeping body) goes through the
+/// body. Returns a copy because the collide task only reads the sim.
+/// (b3ResolveContactBodySim)
+fn resolve_contact_body_sim(world: &World, encoded_index: i32, body_id: i32) -> BodySim {
+    if encoded_index >= 0 {
+        return world.solver_sets[AWAKE_SET as usize].body_sims[encoded_index as usize];
+    }
+
+    if is_static_sim_index(encoded_index) {
+        return world.solver_sets[STATIC_SET as usize].body_sims[(-encoded_index - 2) as usize];
+    }
+
+    let body = &world.bodies[body_id as usize];
+    world.solver_sets[body.set_index as usize].body_sims[body.local_index as usize]
 }
 
 /// (b3RemoveNonTouchingContact)
@@ -80,9 +95,10 @@ fn collide_task(world: &mut World, contact_indices: &[i32], worker_index: i32) {
         let shape_id_a = world.contacts[contact_index as usize].shape_id_a;
         let shape_id_b = world.contacts[contact_index as usize].shape_id_b;
 
-        let overlap = aabb_overlaps(
-            world.shapes[shape_id_a as usize].fat_aabb,
-            world.shapes[shape_id_b as usize].fat_aabb,
+        // Do proxies still overlap?
+        let overlap = overlap_v(
+            &world.fat_aabbs[shape_id_a as usize],
+            &world.fat_aabbs[shape_id_b as usize],
         );
         if !overlap {
             world.contacts[contact_index as usize].flags |= contact_flags::SIM_DISJOINT;
@@ -93,35 +109,26 @@ fn collide_task(world: &mut World, contact_indices: &[i32], worker_index: i32) {
             continue;
         }
 
-        let body_id_a = world.shapes[shape_id_a as usize].body_id;
-        let body_id_b = world.shapes[shape_id_b as usize].body_id;
-        let is_static_a = world.bodies[body_id_a as usize].type_ == BodyType::Static;
-        let is_static_b = world.bodies[body_id_b as usize].type_ == BodyType::Static;
+        // Update contact respecting shape/body order (A,B)
+        let encoded_a = world.contacts[contact_index as usize].encoded_body_sim_a;
+        let encoded_b = world.contacts[contact_index as usize].encoded_body_sim_b;
+        let sim_a = resolve_contact_body_sim(
+            world,
+            encoded_a,
+            world.contacts[contact_index as usize].edges[0].body_id,
+        );
+        let sim_b = resolve_contact_body_sim(
+            world,
+            encoded_b,
+            world.contacts[contact_index as usize].edges[1].body_id,
+        );
+
         let was_touching =
             (world.contacts[contact_index as usize].flags & contact_flags::SIM_TOUCHING) != 0;
 
-        let set_a = world.bodies[body_id_a as usize].set_index;
-        let set_b = world.bodies[body_id_b as usize].set_index;
-        let local_a = world.bodies[body_id_a as usize].local_index;
-        let local_b = world.bodies[body_id_b as usize].local_index;
-
-        if was_touching {
-            debug_assert!(set_a == AWAKE_SET || set_a == STATIC_SET);
-            debug_assert!(set_b == AWAKE_SET || set_b == STATIC_SET);
-        }
-
-        let sim_a = world.solver_sets[set_a as usize].body_sims[local_a as usize];
-        let sim_b = world.solver_sets[set_b as usize].body_sims[local_b as usize];
         let transform_a = sim_a.transform;
         let transform_b = sim_b.transform;
-        let is_fast =
-            (sim_a.flags & body_flags::IS_FAST) != 0 || (sim_b.flags & body_flags::IS_FAST) != 0;
-
-        {
-            let contact = &mut world.contacts[contact_index as usize];
-            contact.body_sim_index_a = if is_static_a { NULL_INDEX } else { local_a };
-            contact.body_sim_index_b = if is_static_b { NULL_INDEX } else { local_b };
-        }
+        let is_fast = ((sim_a.flags | sim_b.flags) & body_flags::IS_FAST) != 0;
 
         let recycle_tolerance = if was_touching {
             recycle_distance
@@ -146,7 +153,7 @@ fn collide_task(world: &mut World, contact_indices: &[i32], worker_index: i32) {
 
             let xf = inv_mul_world_transforms(transform_a, transform_b);
             let xfc = contact.cached_relative_pose;
-            let max_extent_a = if is_static_a {
+            let max_extent_a = if is_static_sim_index(encoded_a) {
                 Vec3 {
                     x: 0.0,
                     y: 0.0,
@@ -155,7 +162,7 @@ fn collide_task(world: &mut World, contact_indices: &[i32], worker_index: i32) {
             } else {
                 sim_a.max_extent
             };
-            let max_extent_b = if is_static_b {
+            let max_extent_b = if is_static_sim_index(encoded_b) {
                 Vec3 {
                     x: 0.0,
                     y: 0.0,
@@ -265,14 +272,17 @@ fn collide_task(world: &mut World, contact_indices: &[i32], worker_index: i32) {
                 .set_bit(contact_index as u32);
         }
 
-        let manifold_count = world.contacts[contact_index as usize].manifold_count();
-        for manifold_index in 0..manifold_count as usize {
-            let point_count =
-                world.contacts[contact_index as usize].manifolds[manifold_index].point_count;
-            for point_index in 0..point_count as usize {
-                let mp = &mut world.contacts[contact_index as usize].manifolds[manifold_index]
-                    .points[point_index];
-                mp.base_separation = mp.separation;
+        if touching {
+            let manifold_count = world.contacts[contact_index as usize].manifold_count();
+            for manifold_index in 0..manifold_count as usize {
+                let point_count =
+                    world.contacts[contact_index as usize].manifolds[manifold_index].point_count;
+                for point_index in 0..point_count as usize {
+                    // Cache separation
+                    let mp = &mut world.contacts[contact_index as usize].manifolds[manifold_index]
+                        .points[point_index];
+                    mp.base_separation = mp.separation;
+                }
             }
         }
     }

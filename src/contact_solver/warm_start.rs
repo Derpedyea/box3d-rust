@@ -8,7 +8,14 @@ use crate::body::{body_flags, BodyState, IDENTITY_BODY_STATE};
 use crate::core::NULL_INDEX;
 use crate::math_functions::{add, cross, mul_add, mul_mv, mul_mv_sym, mul_sub, mul_sv, sub};
 
-fn warm_start_one(contact_constraint: &ContactConstraint, states: &mut [BodyState], use_sym: bool) {
+/// `wide_point_count` is the wide constraint point count for the Convex kernel (the maximum over the
+/// four lanes; padded points carry zero data). `None` uses the manifold point count (Mesh).
+fn warm_start_one(
+    contact_constraint: &ContactConstraint,
+    states: &mut [BodyState],
+    use_sym: bool,
+    wide_point_count: Option<usize>,
+) {
     let index_a = contact_constraint.index_a;
     let index_b = contact_constraint.index_b;
 
@@ -40,8 +47,8 @@ fn warm_start_one(contact_constraint: &ContactConstraint, states: &mut [BodyStat
         let constraint = &contact_constraint.constraints[manifold_index];
 
         let normal = constraint.normal;
-        let point_count = constraint.point_count;
-        for j in 0..point_count as usize {
+        let point_count = wide_point_count.unwrap_or(constraint.point_count as usize);
+        for j in 0..point_count {
             let cp = &constraint.points[j];
 
             let r_a = cp.r_a;
@@ -101,13 +108,17 @@ fn warm_start_one(contact_constraint: &ContactConstraint, states: &mut [BodyStat
 /// (b3WarmStartContacts_Mesh)
 pub fn warm_start_contacts(constraints: &mut [ContactConstraint], states: &mut [BodyState]) {
     for contact_constraint in constraints.iter() {
-        warm_start_one(contact_constraint, states, false);
+        warm_start_one(contact_constraint, states, false, None);
     }
 }
 
-/// (b3WarmStartContacts_Convex) — SymMatrix inertia multiply.
+/// (b3WarmStartContacts_Convex) — SymMatrix inertia multiply. Walks the constraints in C's wide
+/// groups of four so every lane runs the wide point count.
 pub fn warm_start_contacts_convex(constraints: &mut [ContactConstraint], states: &mut [BodyState]) {
-    for contact_constraint in constraints.iter() {
-        warm_start_one(contact_constraint, states, true);
+    for group in constraints.chunks(super::solve_convex::SIMD_WIDTH) {
+        let point_count = super::solve_convex::wide_point_count(group);
+        for contact_constraint in group.iter() {
+            warm_start_one(contact_constraint, states, true, Some(point_count));
+        }
     }
 }

@@ -27,6 +27,19 @@ impl World {
         debug_assert!(self.island_id_pool.id_capacity() == self.islands.len() as i32);
         debug_assert!(self.solver_set_id_pool.id_capacity() == self.solver_sets.len() as i32);
 
+        // Ensure the encoded body sim indices are correct.
+        #[cfg(debug_assertions)]
+        for contact in &self.contacts {
+            if contact.contact_id == NULL_INDEX {
+                continue;
+            }
+
+            let body_a = &self.bodies[contact.edges[0].body_id as usize];
+            let body_b = &self.bodies[contact.edges[1].body_id as usize];
+            debug_assert!(contact.encoded_body_sim_a == crate::body::encode_body_sim_index(body_a));
+            debug_assert!(contact.encoded_body_sim_b == crate::body::encode_body_sim_index(body_b));
+        }
+
         let mut active_set_count = 0;
         let mut total_body_count = 0;
         let mut total_joint_count = 0;
@@ -63,7 +76,8 @@ impl World {
                         debug_assert!(body.local_index == local_index as i32);
                         debug_assert!(body.id == body_id);
 
-                        let synced_flags = body.flags & !body_flags::BODY_TRANSIENT_FLAGS;
+                        let synced_flags =
+                            body.flags & !(body_flags::IS_FAST | body_flags::BODY_TRANSIENT_FLAGS);
                         debug_assert!((body_sim.flags & synced_flags) == synced_flags);
 
                         if set_index == AWAKE_SET as usize {

@@ -1,6 +1,6 @@
-//! Serial solve driver from solver.c: island split → prepare → sub-step loop →
-//! restitution → store → finalize → joint events → hit events → broad-phase
-//! enlarge → island sleep.
+//! Serial solve driver from solver.c: island split → prepare → sub-step loop (push, relax
+//! with deferred restitution) → store → finalize → joint events → hit events →
+//! broad-phase enlarge → island sleep.
 //!
 //! SPDX-FileCopyrightText: 2025 Erin Catto
 //! SPDX-License-Identifier: MIT
@@ -11,14 +11,12 @@ use super::integrate::{finalize_bodies, integrate_positions, integrate_velocitie
 use super::StepContext;
 use crate::body::body_flags;
 use crate::broad_phase::{proxy_id, proxy_type};
-use crate::constants::{
-    GRAPH_COLOR_COUNT, RELAX_ITERATIONS, RESTITUTION_ITERATIONS, SOLVER_ITERATIONS,
-};
+use crate::constants::{GRAPH_COLOR_COUNT, RELAX_ITERATIONS, SOLVER_ITERATIONS};
 use crate::constraint_graph::OVERFLOW_INDEX;
 use crate::contact_solver::{
-    apply_restitution, apply_restitution_convex, flag_hit_events, prepare_color_contacts,
-    solve_contacts, solve_contacts_convex, store_impulses, warm_start_contacts,
-    warm_start_contacts_convex, ContactConstraint,
+    flag_hit_events, prepare_color_contacts, push_contacts, push_contacts_convex, solve_contacts,
+    solve_contacts_convex, store_impulses, warm_start_contacts, warm_start_contacts_convex,
+    ContactConstraint,
 };
 use crate::core::NULL_INDEX;
 use crate::events::{BodyMoveEvent, JointEvent};
@@ -32,7 +30,7 @@ use crate::world::World;
 
 /// Solve joints then contacts for overflow + colors. During biased solve,
 /// force/torque thresholds set bits in `joint_state_bit_set`. (serial of
-/// b3SolveJointsTask / b3SolveContacts_Convex + b3SolveContacts_Mesh + overflow)
+/// b3SolveJointsTask / b3PushContacts_* when `use_bias`, else b3SolveContacts_*, + overflow)
 fn solve_joints_then_contacts(
     world: &mut World,
     color_constraints: &mut [Vec<ContactConstraint>],
@@ -59,12 +57,21 @@ fn solve_joints_then_contacts(
 
         let states = &mut world.solver_sets[AWAKE_SET as usize].body_states;
         debug_assert_eq!(convex_counts[OVERFLOW_INDEX as usize], 0);
-        solve_contacts(
-            &mut color_constraints[OVERFLOW_INDEX as usize],
-            states,
-            context,
-            use_bias,
-        );
+        if use_bias {
+            // (b3PushContacts_Overflow)
+            push_contacts(
+                &mut color_constraints[OVERFLOW_INDEX as usize],
+                states,
+                context,
+            );
+        } else {
+            // (b3SolveContacts_Overflow)
+            solve_contacts(
+                &mut color_constraints[OVERFLOW_INDEX as usize],
+                states,
+                context,
+            );
+        }
     }
 
     for color_index in 0..OVERFLOW_INDEX as usize {
@@ -87,8 +94,13 @@ fn solve_joints_then_contacts(
         let convex_count = convex_counts[color_index];
         let (convex, mesh) = color_constraints[color_index].split_at_mut(convex_count);
         // C graph blocks: joints → wide/convex → mesh
-        solve_contacts_convex(convex, states, context, use_bias);
-        solve_contacts(mesh, states, context, use_bias);
+        if use_bias {
+            push_contacts_convex(convex, states, context);
+            push_contacts(mesh, states, context);
+        } else {
+            solve_contacts_convex(convex, states, context);
+            solve_contacts(mesh, states, context);
+        }
     }
 }
 
@@ -178,7 +190,7 @@ pub fn solve(world: &mut World, context: &StepContext) {
             .convex_contacts
             .clone();
         let mesh_specs = world.constraint_graph.colors[color_index].contacts.clone();
-        let contacts = &world.contacts;
+        let contacts = &mut world.contacts;
         let sims = &world.solver_sets[AWAKE_SET as usize].body_sims;
         let states = &world.solver_sets[AWAKE_SET as usize].body_states;
         convex_counts[color_index] = prepare_color_contacts(
@@ -246,24 +258,8 @@ pub fn solve(world: &mut World, context: &StepContext) {
         }
     }
 
-    // Restitution
-    for _ in 0..RESTITUTION_ITERATIONS {
-        let states = &mut world.solver_sets[AWAKE_SET as usize].body_states;
-        // Overflow always uses Mesh restitution (C: b3ApplyRestitution_Overflow)
-        apply_restitution(
-            &mut color_constraints[OVERFLOW_INDEX as usize],
-            states,
-            context,
-        );
-        for color_index in 0..OVERFLOW_INDEX as usize {
-            let convex_count = convex_counts[color_index];
-            let (convex, mesh) = color_constraints[color_index].split_at_mut(convex_count);
-            apply_restitution_convex(convex, states, context);
-            apply_restitution(mesh, states, context);
-        }
-    }
-
-    // Store impulses (overflow without hit-event flagging, colors with)
+    // Store impulses. C stores the overflow contacts with b3StoreImpulses_Overflow (the Mesh
+    // kernel, which also flags hit events) and the colors in the store stages.
     {
         store_impulses(
             &color_constraints[OVERFLOW_INDEX as usize],
@@ -276,7 +272,7 @@ pub fn solve(world: &mut World, context: &StepContext) {
 
         let neg_hit_threshold = -world.hit_event_threshold;
         let mut has_hit = world.task_contexts[0].has_hit_events;
-        for color_index in 0..OVERFLOW_INDEX as usize {
+        for color_index in 0..GRAPH_COLOR_COUNT as usize {
             flag_hit_events(
                 &color_constraints[color_index],
                 &world.contacts,
@@ -446,7 +442,7 @@ pub fn solve(world: &mut World, context: &StepContext) {
     // Fast bullet bodies. Note: a bullet body may be moving slow
     if !bullet_bodies.is_empty() {
         for &sim_index in &bullet_bodies {
-            solve_continuous(world, sim_index);
+            solve_continuous(world, sim_index, context.dt);
         }
 
         // Serially enlarge broad-phase proxies for bullet shapes
@@ -456,12 +452,12 @@ pub fn solve(world: &mut World, context: &StepContext) {
         for &sim_index in &bullet_bodies {
             let bullet_sim =
                 &mut world.solver_sets[AWAKE_SET as usize].body_sims[sim_index as usize];
-            if (bullet_sim.flags & body_flags::ENLARGE_BOUNDS) == 0 {
+            if (bullet_sim.flags & body_flags::ENLARGE_BULLET_BOUNDS) == 0 {
                 continue;
             }
 
             // Clear flag
-            bullet_sim.flags &= !body_flags::ENLARGE_BOUNDS;
+            bullet_sim.flags &= !body_flags::ENLARGE_BULLET_BOUNDS;
 
             let body_id = bullet_sim.body_id;
             debug_assert!(0 <= body_id && (body_id as usize) < world.bodies.len());
@@ -473,7 +469,7 @@ pub fn solve(world: &mut World, context: &StepContext) {
                 debug_assert!(proxy_type(proxy_key) == BodyType::Dynamic);
 
                 let tree_aabb = world.broad_phase.trees[dynamic_tree].aabb(proxy_id_);
-                let fat_aabb = world.shapes[shape_id as usize].fat_aabb;
+                let fat_aabb = world.fat_aabbs[shape_id as usize];
 
                 if !aabb_contains(tree_aabb, fat_aabb) {
                     world.broad_phase.trees[dynamic_tree].enlarge_proxy(proxy_id_, fat_aabb);

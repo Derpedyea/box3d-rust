@@ -63,9 +63,21 @@ pub(crate) fn create_shape_internal(
 
     if shape_id == world.shapes.len() as i32 {
         world.shapes.push(Shape::default());
+        world.fat_aabbs.push(Aabb {
+            lower_bound: VEC3_ZERO,
+            upper_bound: VEC3_ZERO,
+        });
     } else {
         debug_assert!(world.shapes[shape_id as usize].id == NULL_INDEX);
     }
+
+    debug_assert!(world.fat_aabbs.len() == world.shapes.len());
+
+    // C resets this alongside `shape->aabb` below; nothing reads it in between.
+    world.fat_aabbs[shape_id as usize] = Aabb {
+        lower_bound: VEC3_ZERO,
+        upper_bound: VEC3_ZERO,
+    };
 
     let (body_raw_id, body_set_index, body_type, head_shape_id) = {
         let body = &world.bodies[body_index as usize];
@@ -111,10 +123,6 @@ pub(crate) fn create_shape_internal(
             lower_bound: VEC3_ZERO,
             upper_bound: VEC3_ZERO,
         };
-        shape.fat_aabb = Aabb {
-            lower_bound: VEC3_ZERO,
-            upper_bound: VEC3_ZERO,
-        };
         shape.name_id = name_id;
         shape.generation = shape.generation.wrapping_add(1);
 
@@ -152,10 +160,9 @@ pub(crate) fn create_shape_internal(
 
     if body_set_index != DISABLED_SET {
         let force_pair_creation = def.invoke_contact_creation && shape_type != ShapeType::Compound;
-        let (shapes, broad_phase) = (&mut world.shapes, &mut world.broad_phase);
         create_shape_proxy(
-            &mut shapes[shape_id as usize],
-            broad_phase,
+            world,
+            shape_id,
             body_type,
             body_transform,
             force_pair_creation,
