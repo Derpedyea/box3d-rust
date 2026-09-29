@@ -19,6 +19,10 @@ pub const NULL_INDEX: i32 = -1;
 /// Use to validate definitions. (core.h: B3_SECRET_COOKIE)
 pub const SECRET_COOKIE: i32 = 1152023;
 
+/// Number of lanes in a wide float. Every upstream SIMD configuration, including the scalar
+/// `B3_SIMD_NONE` path the port implements, uses a width of 4. (core.h: B3_SIMD_WIDTH)
+pub const SIMD_WIDTH: usize = 4;
+
 // The length-unit scale is a single global that the user sets once at startup.
 // C stores it as a plain `static float`; we store the bit pattern in an atomic
 // so the global is sound under Rust's threading rules. The observable value is

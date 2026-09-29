@@ -15,6 +15,8 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
 - `f555ee4` Optimize Broad-Phase (#159)
 - `9e5a4cd` Optimizations (#161)
 - `79fc559` Optimizations (#168)
+- `8fda30e` (samples only, nothing to port)
+- `adec25b` SAT optimizations (#170)
 
 ### Breaking
 
@@ -240,6 +242,17 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
   enabled; the prismatic and weld prepare asserts accept either body awake.
 - The ragdoll, wave-pile, and query-spawn determinism goldens change and
   match upstream in both precision modes.
+- Hull-vs-hull SAT culling (upstream `adec25b`): the separating axis query
+  bounds each candidate axis by the hull inner radii and center distance,
+  seeds a separation floor from the face best aligned with the center
+  delta, skips faces that cannot beat it, and pre-culls edge pairs whose
+  Gauss map arcs cannot reach the best separation (returning early when
+  either hull has no candidates). When face clipping produces no points,
+  `collide_hulls` reruns a full query for the best edge pair.
+  `find_hull_support_vertex` scans the SoA vertices four lanes at a time
+  and breaks ties toward the lowest vertex index. Verified bit-identical to
+  the C reference on randomized hull pairs in both precision modes;
+  determinism goldens are unchanged.
 
 ### Fixed
 

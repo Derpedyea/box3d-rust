@@ -579,7 +579,15 @@ pub fn collide_hulls(
         debug_assert!((cache.index_b as i32) < hull_b.face_count);
     }
 
-    let edge_query = axis_query.edge;
+    let mut edge_query = axis_query.edge;
+
+    // If face clipping yields no points then I need to run a full SAT to get the best edge pair.
+    if manifold.point_count == 0
+        && edge_query.separation
+            < max_float(axis_query.face_a.separation, axis_query.face_b.separation)
+    {
+        edge_query = compute_separating_axis(hull_a, hull_b, transform_b_to_a, false).edge;
+    }
 
     if edge_query.index_a == NULL_INDEX {
         // There are no valid edge pairs (all edges parallel)

@@ -3,9 +3,10 @@
 //! SPDX-FileCopyrightText: 2025 Erin Catto
 //! SPDX-License-Identifier: MIT
 
-use super::{lane, ContactConstraintWide, EMPTY_LANE, SIMD_WIDTH};
+use super::{lane, ContactConstraintWide, EMPTY_LANE};
 use crate::bitset::BitSet;
 use crate::contact::{contact_flags, Contact};
+use crate::core::SIMD_WIDTH;
 use crate::math_functions::Vec3;
 
 /// Store impulses by contact constraint and flag hit-event candidates.

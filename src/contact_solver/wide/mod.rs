@@ -22,14 +22,13 @@ pub use store::store_impulses_convex;
 use crate::body::{body_flags, BodyState, IDENTITY_BODY_STATE};
 use crate::constants::MAX_MANIFOLD_POINTS;
 use crate::core::NULL_INDEX;
+// Kept at the public `contact_solver::wide::SIMD_WIDTH` path for API compatibility.
+pub use crate::core::SIMD_WIDTH;
 use crate::simd_scalar::{abs_w, blend_w};
 use crate::simd_scalar::{
     add_w, div_w, greater_than_w, less_than_w, mul_w, neg_w, or_w, set_w, splat_w, sqrt_w, sub_w,
     zero_w, FloatW,
 };
-
-/// SIMD width of the wide contact constraint. (B3_SIMD_WIDTH)
-pub const SIMD_WIDTH: usize = 4;
 
 /// Wide vec2. (b3Vec2W)
 #[derive(Debug, Clone, Copy, PartialEq)]

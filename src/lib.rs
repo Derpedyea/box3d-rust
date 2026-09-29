@@ -209,6 +209,9 @@ mod hull_box_tests;
 mod hull_tests;
 
 #[cfg(test)]
+mod hull_support_tests;
+
+#[cfg(test)]
 mod hull2d_tests;
 
 #[cfg(test)]

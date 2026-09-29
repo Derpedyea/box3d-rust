@@ -33,6 +33,6 @@ pub use types::{
 };
 
 #[cfg(test)]
-pub(crate) use separating_axis::compute_separating_axis;
+pub(crate) use separating_axis::{arc_can_reach, compute_separating_axis};
 #[cfg(test)]
 pub(crate) use types::get_best_axis;

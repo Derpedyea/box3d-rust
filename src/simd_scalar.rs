@@ -7,8 +7,9 @@
 //! The logical helpers (`and_w`, `or_w`, comparisons) return `0.0`/`1.0` float
 //! masks rather than bit-wise all-ones masks, exactly like the C scalar path.
 //!
-//! The scalar separating-axis face phase (`manifold::separating_axis`) and the wide convex
-//! contact kernels (`contact_solver::wide`) consume these helpers. The rest back the wide
+//! The scalar separating-axis face phase (`manifold::separating_axis`), the hull support
+//! vertex search (`hull::find_hull_support_vertex`), and the wide convex contact kernels
+//! (`contact_solver::wide`) consume these helpers. The rest back the wide
 //! (`b3_simdWidth > 1`) collide path from `convex_manifold.c`, which the port does not
 //! target, and are retained as a complete port of the `simd.h` scalar API.
 //!

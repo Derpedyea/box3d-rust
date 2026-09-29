@@ -6,11 +6,12 @@
 use super::{
     add_sym_w, add_vw, cross_w, dot_w, gather_bodies, invert_sym_w, lane, mul_add_svw, mul_mvw,
     mul_svw, perp_w, sub_vw, ContactConstraintPointWide, ContactConstraintWide, SymMatrix2W,
-    SymMatrix3W, Vec2W, Vec3W, EMPTY_LANE, SIMD_WIDTH, SYM3W_ZERO,
+    SymMatrix3W, Vec2W, Vec3W, EMPTY_LANE, SYM3W_ZERO,
 };
 use crate::body::{decode_awake_index, BodySim, BodyState};
 use crate::constants::{speculative_distance, MAX_MANIFOLD_POINTS, MIN_FRICTION_WEIGHT};
 use crate::contact::{contact_flags, Contact};
+use crate::core::SIMD_WIDTH;
 use crate::manifold::{Manifold, ManifoldPoint};
 use crate::simd_scalar::{
     abs_w, add_w, all_zero_w, and_w, any_true_w, blend_w, div_w, greater_than_w, max_w, min_w,
