@@ -216,6 +216,14 @@ impl Recording {
         self.end_record();
     }
 
+    /// Write framed `BodySetSafetyFactor` op.
+    pub fn write_body_set_safety_factor(&mut self, body: BodyId, value: f32) {
+        self.begin_record(RecOp::BodySetSafetyFactor as u8);
+        self.buffer.append_body_id(body);
+        self.buffer.append_f32(value);
+        self.end_record();
+    }
+
     /// Write framed `BodyDisable` op.
     pub fn write_body_disable(&mut self, body: BodyId) {
         self.begin_record(RecOp::BodyDisable as u8);

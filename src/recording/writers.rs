@@ -110,6 +110,7 @@ impl RecBuffer {
         self.append_f32(v.angular_damping);
         self.append_f32(v.gravity_scale);
         self.append_f32(v.sleep_threshold);
+        self.append_f32(v.safety_factor);
         self.append_str(&v.name);
         self.append_u64(0); // userData not preserved
         self.append_locks(v.motion_locks);
@@ -386,6 +387,7 @@ impl<'a> SnapReader<'a> {
         d.angular_damping = self.f32();
         d.gravity_scale = self.f32();
         d.sleep_threshold = self.f32();
+        d.safety_factor = self.f32();
         d.name = self.str_owned();
         let _user = self.u64();
         d.motion_locks = self.locks();

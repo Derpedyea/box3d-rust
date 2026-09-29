@@ -43,9 +43,8 @@ fn create_and_destroy_filter_joint() {
         world.bodies[b_index as usize].island_id
     );
 
-    // A filter joint merges islands. Box3D C does not destroy the contact
-    // on create; SetCollideConnected(false) does (already false here, so
-    // toggle true then false to exercise destroy).
+    // A filter joint merges islands. With collide_connected false, creating the
+    // joint destroys the existing contact between the bodies (upstream issue #117).
     let mut filter_def = default_filter_joint_def();
     filter_def.base.body_id_a = body_a;
     filter_def.base.body_id_b = body_b;
@@ -73,11 +72,15 @@ fn create_and_destroy_filter_joint() {
         assert_eq!(joint.type_, JointType::Filter);
     }
 
-    // Destroy existing contact via SetCollideConnected(false) after a
-    // no-op true╬ô├Ñ├åfalse path is already default; force via true then false.
-    assert_eq!(world.contact_id_pool.id_count(), 1);
+    // Creating the joint destroyed the existing contact.
+    assert_eq!(world.contact_id_pool.id_count(), 0);
+
+    // Enabling collision re-buffers shapes so the broad phase can recreate the
+    // contact; disabling it again destroys the contact via SetCollideConnected(false).
     joint_set_collide_connected(&mut world, filter_id, true);
     assert!(joint_get_collide_connected(&world, filter_id));
+    update_broad_phase_pairs(&mut world);
+    assert_eq!(world.contact_id_pool.id_count(), 1);
     joint_set_collide_connected(&mut world, filter_id, false);
     assert!(!joint_get_collide_connected(&world, filter_id));
     assert_eq!(world.contact_id_pool.id_count(), 0);

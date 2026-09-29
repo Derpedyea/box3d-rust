@@ -6,9 +6,9 @@
 // get_joint_sim, which also survives the solver-set merge that orphans the C
 // pointer.
 //
-// Unlike Box2D, Box3D does not destroy contacts on joint create when
-// collideConnected is false — only b3Joint_SetCollideConnected(false) does.
-// New pairs are still blocked by should_bodies_collide.
+// When collideConnected is false, joint creation first destroys the existing
+// contacts between the two bodies (upstream issue #117); new pairs are then
+// blocked by should_bodies_collide.
 //
 // SPDX-FileCopyrightText: 2025 Erin Catto
 // SPDX-License-Identifier: MIT
@@ -75,9 +75,19 @@ pub(crate) fn create_joint(world: &mut World, def: &JointDef, joint_type: JointT
     debug_assert!(is_valid_transform(def.local_frame_a));
     debug_assert!(is_valid_transform(def.local_frame_b));
     debug_assert!(def.internal_value == crate::core::SECRET_COOKIE);
+    debug_assert!(world.world_id == def.body_id_a.world0);
+    debug_assert!(world.world_id == def.body_id_b.world0);
+    debug_assert!(def.body_id_a != def.body_id_b);
 
     let body_id_a = get_body_full_id(world, def.body_id_a);
     let body_id_b = get_body_full_id(world, def.body_id_b);
+
+    // If the joint prevents collisions, then destroy all contacts between attached bodies.
+    // Do this first so world arrays are not disturbed in the following code.
+    if !def.collide_connected {
+        destroy_contacts_between_bodies(world, body_id_a, body_id_b);
+    }
+
     let max_set_index = max_int(
         world.bodies[body_id_a as usize].set_index,
         world.bodies[body_id_b as usize].set_index,
@@ -273,10 +283,6 @@ pub(crate) fn create_joint(world: &mut World, def: &JointDef, joint_type: JointT
         // Add edge to island graph
         link_joint(world, joint_id);
     }
-
-    // Box3D C does not destroy contacts here (unlike Box2D). Filtering for new
-    // pairs is handled by should_bodies_collide; existing contacts are cleared
-    // only via joint_set_collide_connected(false).
 
     world.validate_solver_sets();
 

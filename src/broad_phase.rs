@@ -391,6 +391,19 @@ fn query_tree_for_pairs(
     );
 }
 
+/// Rebuild the collision tree for dynamic and kinematic bodies to keep their query
+/// performance good. (b3UpdateTreesTask)
+fn update_trees_task(world: &mut World) {
+    world.broad_phase.trees[BodyType::Dynamic as usize].rebuild(false);
+    world.broad_phase.trees[BodyType::Kinematic as usize].rebuild(false);
+}
+
+/// Task that can be done in parallel with the narrow-phase. The port is serial, so this
+/// runs the task inline, like C's fallback when the task queue is full. (b3EnqueueTreeUpdate)
+fn enqueue_tree_update(world: &mut World) {
+    update_trees_task(world);
+}
+
 /// Find new proxy pairs and create contacts in deterministic move-array order.
 /// (b3UpdateBroadPhasePairs — serial)
 pub fn update_broad_phase_pairs(world: &mut World) {
@@ -398,6 +411,8 @@ pub fn update_broad_phase_pairs(world: &mut World) {
 
     let move_count = world.broad_phase.move_array.len();
     if move_count == 0 {
+        // A destroyed shape may lead to no moves, but the tree could still be enlarged.
+        enqueue_tree_update(world);
         return;
     }
 
@@ -449,8 +464,8 @@ pub fn update_broad_phase_pairs(world: &mut World) {
         move_results.push(pair_list);
     }
 
-    world.broad_phase.trees[BodyType::Dynamic as usize].rebuild(false);
-    world.broad_phase.trees[BodyType::Kinematic as usize].rebuild(false);
+    // Update stale trees.
+    enqueue_tree_update(world);
 
     // C prepends to a linked list then walks head-first (= reverse discovery).
     for pair_list in &move_results {

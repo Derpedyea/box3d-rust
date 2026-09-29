@@ -8,6 +8,7 @@
 
 use crate::constants::{linear_slop, MAX_MANIFOLD_POINTS};
 use crate::core::NULL_INDEX;
+use crate::hull::{hull_2d, simplify_hull_2d, Point2D};
 use crate::manifold::LocalManifoldPoint;
 use crate::math_functions::{
     abs_float, cross, cross2, distance_squared2, dot, max_float, max_int, min_int, perp, sub, sub2,
@@ -124,13 +125,6 @@ fn is_better_cull_candidate(
         return false;
     }
     separation < best_separation - separation_tol
-}
-
-#[derive(Clone, Copy, Default)]
-struct Point2D {
-    p: Vec2,
-    separation: f32,
-    original_index: i32,
 }
 
 /// Cull a 2D point cloud down to at most 4 points. (b3CullPoints)
@@ -323,12 +317,22 @@ pub(crate) fn reduce_cluster(points: &mut [LocalManifoldPoint], count1: i32, nor
         pts[i as usize].original_index = i;
     }
 
-    let count2 = cull_points(&mut pts, count1);
+    // C selects between these with `#if B3_MAX_MANIFOLD_POINTS == 4`.
+    let mut hull_buffer;
+    let (hull, count2): (&[Point2D], i32) = if MAX_MANIFOLD_POINTS == 4 {
+        let count2 = cull_points(&mut pts, count1);
+        (&pts, count2)
+    } else {
+        hull_buffer = vec![Point2D::default(); 2 * count1 as usize];
+        let hull_count = hull_2d(&mut pts, count1, &mut hull_buffer);
+        let count2 = simplify_hull_2d(&mut hull_buffer, hull_count, MAX_MANIFOLD_POINTS as i32);
+        (&hull_buffer, count2)
+    };
     debug_assert!(count2 as usize <= MAX_MANIFOLD_POINTS);
 
     let mut final_points = [LocalManifoldPoint::default(); MAX_MANIFOLD_POINTS];
     for i in 0..count2 {
-        let index = pts[i as usize].original_index;
+        let index = hull[i as usize].original_index;
         debug_assert!(0 <= index && index < count1);
         final_points[i as usize] = points[index as usize];
     }

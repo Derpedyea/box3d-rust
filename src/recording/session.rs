@@ -17,8 +17,8 @@ use std::collections::HashMap;
 /// Magic 'B3RC' little-endian. (B3_REC_MAGIC)
 pub const REC_MAGIC: u32 = 0x4352_3342;
 /// Major recording version. (B3_REC_VERSION_MAJOR)
-/// Major version 5 added b3PlaneResult fields.
-pub const REC_VERSION_MAJOR: u16 = 5;
+/// Major version 6 widened the body def with the safety factor.
+pub const REC_VERSION_MAJOR: u16 = 6;
 /// Minor recording version. (B3_REC_VERSION_MINOR)
 /// Minor version 4 added b3Shape_SetMeshMaterial, b3Shape_SetHull, b3Shape_SetMesh
 pub const REC_VERSION_MINOR: u16 = 4;

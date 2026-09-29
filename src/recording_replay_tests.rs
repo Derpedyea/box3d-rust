@@ -366,3 +366,114 @@ include!("recording_replay_tests_extra.rs");
 include!("recording_replay_tests_draw.rs");
 include!("recording_replay_tests_geometry.rs");
 include!("recording_replay_tests_corrupt.rs");
+
+/// Safety factor of the named body in a replay world, or -1 if the body is not in the list.
+/// (ReplaySafetyFactor)
+fn replay_safety_factor(player: &crate::recording::RecPlayer, name: &str) -> f32 {
+    use crate::body::{body_get_name, body_get_safety_factor, body_is_valid};
+
+    let count = player.get_body_count();
+    for i in 0..count {
+        let body_id = player.get_body_id(i);
+        if body_is_valid(player.world(), body_id) && body_get_name(player.world(), body_id) == name
+        {
+            return body_get_safety_factor(player.world(), body_id);
+        }
+    }
+
+    -1.0
+}
+
+/// The safety factor additions to the C `AllOps` session (the Rust port has no single
+/// `AllOps` test): a disabled/enabled body gets `body_set_safety_factor`, a fast body
+/// records a non-default `BodyDef::safety_factor`, and the setter is injected at frame 6.
+/// The replay world must restore both the def value and the setter value.
+#[test]
+fn safety_factor_round_trip() {
+    use crate::body::{body_disable, body_enable, body_get_safety_factor, body_set_safety_factor};
+    use crate::recording::RecPlayer;
+
+    let rec = Recording::new(0);
+    let mut world = World::new(&default_world_def());
+    world_start_recording(&mut world, rec);
+
+    let mut ground_def = default_body_def();
+    ground_def.type_ = BodyType::Static;
+    let ground_id = create_body(&mut world, &ground_def);
+    let ground_box = make_box_hull(50.0, 1.0, 50.0);
+    create_hull_shape(
+        &mut world,
+        ground_id,
+        &default_shape_def(),
+        &ground_box.base,
+    );
+
+    let sphere_shape_def = default_shape_def();
+
+    let mut disable_def = default_body_def();
+    disable_def.type_ = BodyType::Dynamic;
+    disable_def.position = Pos {
+        x: 9.0,
+        y: 5.0,
+        z: 0.0,
+    };
+    disable_def.name = "dropBody".to_string();
+    let disable_id = create_body(&mut world, &disable_def);
+    let disable_sphere = Sphere {
+        center: VEC3_ZERO,
+        radius: 0.3,
+    };
+    create_sphere_shape(&mut world, disable_id, &sphere_shape_def, &disable_sphere);
+    body_disable(&mut world, disable_id);
+    body_enable(&mut world, disable_id);
+    body_set_safety_factor(&mut world, disable_id, 0.25);
+
+    // A body that falls fast enough to stay on the continuous path for the whole session. The
+    // non-default factor is what proves the widened body def payload round-trips, since every
+    // other body records the default. Named so the replay check can find it.
+    let mut fast_def = default_body_def();
+    fast_def.type_ = BodyType::Dynamic;
+    fast_def.position = Pos {
+        x: -14.0,
+        y: 30.0,
+        z: 0.0,
+    };
+    fast_def.linear_velocity = Vec3 {
+        x: 0.0,
+        y: -8.0,
+        z: 0.0,
+    };
+    fast_def.safety_factor = 0.1;
+    fast_def.name = "fastBody".to_string();
+    let fast_id = create_body(&mut world, &fast_def);
+    assert_eq!(body_get_safety_factor(&world, fast_id), 0.1);
+    let fast_box = make_box_hull(0.5, 0.5, 0.5);
+    create_hull_shape(&mut world, fast_id, &sphere_shape_def, &fast_box.base);
+
+    let time_step = 1.0 / 60.0;
+    let sub_step_count = 4;
+    for i in 0..12 {
+        // Inject mutators mid-simulation
+        if i == 6 {
+            body_set_safety_factor(&mut world, fast_id, 0.4);
+        }
+
+        world.step(time_step, sub_step_count);
+    }
+
+    let rec = world_stop_recording(&mut world).expect("recording active");
+    assert!(validate_replay(rec.data(), 1));
+
+    // The state hash only proves the op stream stayed aligned. Read the safety factor back out of
+    // the replay world so a value that is written but never restored is caught too.
+    let mut player = RecPlayer::create(rec.data(), 1).expect("player");
+
+    // Frame 0 replays the pre-step creates, so the def value is in place
+    assert!(player.step_frame());
+    assert_eq!(replay_safety_factor(&player, "fastBody"), 0.1);
+    assert_eq!(replay_safety_factor(&player, "dropBody"), 0.25);
+
+    // The setter is injected at frame 6
+    while player.step_frame() {}
+    assert_eq!(replay_safety_factor(&player, "fastBody"), 0.4);
+}

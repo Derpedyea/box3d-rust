@@ -5,9 +5,9 @@
 //! SPDX-License-Identifier: MIT
 
 use super::{
-    check_edge_contact, ensure_small, exact_quat, exact_rotation, hull_edge_segment,
-    min_separation, normal_length, slide_x, v, Rng, AXIS_X, AXIS_Y, AXIS_Z, HALF_DIAGONAL,
-    HALF_ROOT2, ROOT2, TILT_ANGLES, TILT_AXES,
+    check_edge_contact, ensure_face_points, ensure_small, exact_quat, exact_rotation,
+    hull_edge_segment, min_separation, normal_length, slide_x, v, Rng, AXIS_X, AXIS_Y, AXIS_Z,
+    HALF_DIAGONAL, HALF_ROOT2, ROOT2, TILT_ANGLES, TILT_AXES,
 };
 use crate::hull::{make_box_hull, make_transformed_box_hull, BoxHull};
 use crate::manifold::{collide_hulls, LocalManifold, SatCache, SeparatingFeature};
@@ -299,7 +299,7 @@ fn parallel_edge_test() {
                 &mut cache,
             );
 
-            assert_eq!(manifold.point_count, 4);
+            ensure_face_points(manifold.point_count);
             assert!(
                 cache.type_ == SeparatingFeature::FaceAxisA as u8
                     || cache.type_ == SeparatingFeature::FaceAxisB as u8
@@ -417,7 +417,7 @@ fn overlap_never_empty_test() {
 // A crossed ridge pair must land on a four point roof face contact. The clipped face
 // separation can be no deeper than root2 times the vertical overlap. (CheckRoofFaceContact)
 fn check_roof_face_contact(manifold: &LocalManifold, cache: &SatCache, overlap: f32) {
-    assert_eq!(manifold.point_count, 4);
+    ensure_face_points(manifold.point_count);
     assert!(
         cache.type_ == SeparatingFeature::FaceAxisA as u8
             || cache.type_ == SeparatingFeature::FaceAxisB as u8

@@ -11,6 +11,7 @@ this port follows its API and behavior. The sync is now advancing toward
 upstream `9f998c8`, one upstream commit at a time. Ported so far:
 
 - `47d7f7c` clockwise option, joint is awake (#130)
+- `954cf87` Fixes (#157)
 
 ### Breaking
 
@@ -49,6 +50,20 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
 - `get_length_and_normalize` now treats vectors with squared length at or
   below `1000 * f32::MIN_POSITIVE` as zero (was length below `f32::EPSILON`)
   and writes a zero length on failure, matching upstream.
+- Recording format major version advances to 6 (upstream `954cf87`): the
+  recorded body def carries `safety_factor`, and the new op `0x3B`
+  `BodySetSafetyFactor` is recorded and replayed. Recordings from major
+  version 5 no longer replay. The world snapshot version advances to 3
+  (`Body::safety_factor`); older snapshots are rejected.
+- `BodyDef` gains `safety_factor` (default 0.5) and `Body` gains
+  `safety_factor` (upstream `954cf87`). Struct literals without
+  `..Default::default()` must add the field.
+- The shared human ragdoll (`human` module) is rewritten to match upstream
+  `954cf87`: the `Spine02` and `Head` bones are gone (the neck bone carries the
+  head capsule), `BoneId` values are renumbered, `BONE_COUNT` is 12,
+  `FILTER_JOINT_COUNT` is 9, and `create_human` now creates three filter
+  joints (thighs, neck and each upper arm). Bone frames, capsules, per-bone
+  friction, joint limits, and foot capsules on the calves all changed.
 
 ### Changed
 
@@ -75,6 +90,19 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
   another (#1).
 - Simplified face-vs-edge contact selection in the hull-capsule and
   triangle-capsule manifolds, matching upstream.
+- Continuous collision uses each body's `safety_factor` (upstream `954cf87`)
+  instead of the fixed 0.5 when deciding whether a body is fast.
+- Contact recycling is skipped for any contact touching a fast body (upstream
+  `954cf87`); previously only fast mesh contacts skipped it.
+- The broad phase rebuilds the dynamic and kinematic trees every step, even
+  when no proxy moved (upstream `954cf87`). The empty-tree validation moved
+  from `solve` into `World::step`, where C finishes the tree task.
+- `reduce_manifold_points` and the mesh cluster reduction follow upstream's
+  `B3_MAX_MANIFOLD_POINTS == 4` split: the default keeps the fast
+  approximate reduction, and a larger `MAX_MANIFOLD_POINTS` would build a
+  2D hull and simplify it to the target.
+- The human ragdoll rewrite changes the ragdoll and wave-pile determinism
+  scenes; both precision modes match upstream's new golden hashes.
 
 ### Fixed
 
@@ -115,6 +143,21 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
 - Snapshot restore no longer releases live shapes a second time inside the
   shape deserializer; the single release in `deserialize_into_shell` matches
   C's `b3DesShapes` / `b3FreeLiveSimElements`.
+- Creating a joint with `collide_connected` false now destroys the existing
+  contacts between the two bodies first (upstream `954cf87`, box3d issue
+  #117). Previously those contacts survived until the joint's collide flag was
+  toggled.
+- Changing a body's mass data (`body_set_mass_data`, `body_apply_mass_from_shapes`,
+  and shape changes that update mass) now invalidates the cached relative
+  transform on the body's contacts, so a recycled manifold is never reused
+  after the center of mass moves (upstream `954cf87`).
+- A proxy enlarged in one step and destroyed before the next no longer leaves
+  enlarged tree nodes behind (upstream `954cf87`, box3d issue #149).
+- `overlap_compound` now brings the world-space proxy into the compound frame
+  before querying the compound tree and children, so compounds on moved or
+  rotated bodies report correct overlaps (upstream `954cf87`). The compound
+  shape cast builds the child-local input with `make_local_proxy` and
+  `inv_rotate_vector` and keeps `can_encroach`.
 
 ### Added
 
@@ -145,6 +188,19 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
 - New tests: overlap hull proxy, transformed box hull, capsule face-deep
   manifolds, and geometry mutator replay.
 - New "Class Ring" demo scene in the Bodies category.
+- Upstream `954cf87` API: `body_set_safety_factor` / `body_get_safety_factor`
+  (b3Body_SetSafetyFactor / GetSafetyFactor), `core::get_max_manifold_points`
+  (b3GetMaxManifoldPoints), and the 2D hull used for manifold simplification:
+  `hull::Point2D`, `hull::hull_2d`, and `hull::simplify_hull_2d`
+  (b3Point2D, b3Hull2D, b3SimplifyHull2D).
+- Ported upstream `954cf87` tests: 2D hull and simplification (6), compound
+  shape cast / material remap / transformed overlap / rotated-child mover (7),
+  body query `OverlapCompoundRotatedBody`, joint
+  `TestCreateJointClearsContacts`, manifold `MaxPointCountTest` with the
+  `ENSURE_FACE_POINTS` range check, world `TestEnlargedProxyDestroyed`, the
+  safety-factor additions to the recording `AllOps` session (as a focused
+  round-trip test), and the determinism `EnsureRepeatable` /
+  `ENSURE_GOLDEN` structure.
 
 ## 0.3.0
 

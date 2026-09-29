@@ -24,10 +24,13 @@ use pods::*;
 
 /// Snapshot image magic 'BNS3'. (B3_SNAP_MAGIC)
 pub const SNAP_MAGIC: u32 = 0x3353_4E42;
-/// Snapshot format version — v2 added the name cache. (B3_SNAP_VERSION)
-pub const SNAP_VERSION: u32 = 2;
+/// Snapshot format version — v2 added the name cache, v3 added `Body::safety_factor`.
+/// (B3_SNAP_VERSION)
+pub const SNAP_VERSION: u32 = 3;
 /// Rust field-layout version — bump when serialized record layouts change.
-pub const SNAP_LAYOUT_VERSION: u32 = 1;
+/// v2: `Body` record gained `safety_factor` (C gets the equivalent change for free because
+/// b3ComputeLayoutHash hashes `sizeof( b3Body )`).
+pub const SNAP_LAYOUT_VERSION: u32 = 2;
 
 pub const SNAP_FLAG_VALIDATION: u32 = 0x1;
 pub const SNAP_FLAG_DOUBLE_PRECISION: u32 = 0x2;

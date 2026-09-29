@@ -165,6 +165,9 @@ mod body_api_tests;
 mod body_query_tests;
 
 #[cfg(test)]
+mod body_query_compound_tests;
+
+#[cfg(test)]
 mod body_query_mover_toi_tests;
 
 #[cfg(test)]
@@ -199,6 +202,9 @@ mod hull_box_tests;
 
 #[cfg(test)]
 mod hull_tests;
+
+#[cfg(test)]
+mod hull2d_tests;
 
 #[cfg(test)]
 mod id_tests;

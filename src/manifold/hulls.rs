@@ -33,6 +33,7 @@ fn build_face_a_contact(
     query: SeparatingAxis,
     cache: &mut SatCache,
 ) -> bool {
+    debug_assert!(capacity > 0);
     debug_assert!(query.type_ == SeparatingFeature::FaceAxisA);
     debug_assert!(0 <= query.index_a && query.index_a < hull_a.face_count);
     debug_assert!(0 <= query.index_b && query.index_b < hull_b.vertex_count);

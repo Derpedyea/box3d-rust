@@ -73,6 +73,28 @@ pub(super) const TILT_ANGLES: [f32; 11] = [
 /// A cube corner is root3/2 from the center of rotation.
 pub(super) const HALF_DIAGONAL: f32 = 0.87;
 
+/// A face contact keeps the whole clipped polygon when the manifold has room for it, so a build
+/// with a larger B3_MAX_MANIFOLD_POINTS legitimately reports more than four points. At the default
+/// this is still an exact count. (ENSURE_FACE_POINTS)
+pub(super) fn ensure_face_points(count: i32) {
+    assert!(
+        4 <= count && count as usize <= crate::constants::MAX_MANIFOLD_POINTS,
+        "face point count {count} out of range"
+    );
+}
+
+/// The library reports the point count it was built with. A mismatch against the manifold
+/// this translation unit sees means the app and the library disagree on b3Manifold.
+/// (MaxPointCountTest)
+#[test]
+fn max_point_count_test() {
+    let manifold = crate::manifold::Manifold::default();
+    assert_eq!(
+        crate::core::get_max_manifold_points(),
+        manifold.points.len() as i32
+    );
+}
+
 /// Matches the C ENSURE_SMALL macro, which is inclusive: pass when
 /// `-tol <= value <= tol`.
 pub(super) fn ensure_small(value: f32, tolerance: f32) {

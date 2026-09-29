@@ -294,6 +294,16 @@ pub(super) fn dispatch(
             }
             let _ = (payload_start, payload_size);
         }
+        RecOp::BodySetSafetyFactor => {
+            let mut s = rdr.snap();
+            let body = s.body_id();
+            let value = s.f32();
+            rdr.sync_from(&s);
+            if rdr.ok {
+                crate::body::body_set_safety_factor(world, rdr.make_body_id(body), value);
+            }
+            let _ = (payload_start, payload_size);
+        }
         RecOp::BodyDisable => {
             let mut s = rdr.snap();
             let body = s.body_id();

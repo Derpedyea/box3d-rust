@@ -172,6 +172,9 @@ pub fn update_body_mass_data(world: &mut World, body_index: i32) {
         sim.max_extent = max(sim.max_extent, extent.max_extent);
     }
 
+    // When the center of mass changes, any cached contact manifold becomes invalid.
+    invalidate_body_contact_transforms(world, body_index);
+
     // Apply fixed rotation
     if (world.bodies[body_index as usize].flags & body_flags::FIXED_ROTATION)
         == body_flags::FIXED_ROTATION
@@ -196,6 +199,22 @@ pub fn body_apply_mass_from_shapes(world: &mut World, body_id: BodyId) {
 
     let body_index = get_body_full_id(world, body_id);
     update_body_mass_data(world, body_index);
+}
+
+/// Clear `RELATIVE_TRANSFORM_VALID` on every contact of the body. C inlines this
+/// edge-list walk in both b3UpdateBodyMassData and b3Body_SetMassData; it is shared
+/// here to keep the two copies identical.
+pub(crate) fn invalidate_body_contact_transforms(world: &mut World, body_index: i32) {
+    let mut edge_key = world.bodies[body_index as usize].head_contact_key;
+    while edge_key != NULL_INDEX {
+        let contact_id = edge_key >> 1;
+        let edge_index = (edge_key & 1) as usize;
+
+        let contact = &mut world.contacts[contact_id as usize];
+        contact.flags &= !crate::contact::contact_flags::RELATIVE_TRANSFORM_VALID;
+
+        edge_key = contact.edges[edge_index].next_key;
+    }
 }
 
 /// Walk the body's shape list and update sim extents about `local_center`.

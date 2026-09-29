@@ -120,7 +120,6 @@ fn maybe_flag_joint_reaction(world: &mut World, joint: &crate::joint::JointSim, 
 pub fn solve(world: &mut World, context: &StepContext) {
     let awake_body_count = world.solver_sets[AWAKE_SET as usize].body_sims.len();
     if awake_body_count == 0 {
-        world.broad_phase.validate_no_enlarged();
         return;
     }
 

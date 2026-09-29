@@ -3,15 +3,19 @@
 //! SPDX-FileCopyrightText: 2025 Erin Catto
 //! SPDX-License-Identifier: MIT
 
-use super::types::{LocalManifold, LocalManifoldPoint, SeparatingAxis, SeparatingFeature};
-use crate::constants::speculative_distance;
+use super::types::{
+    LocalManifold, LocalManifoldPoint, SeparatingAxis, SeparatingFeature, MAX_CLIP_POINTS,
+};
+use crate::constants::{speculative_distance, MAX_MANIFOLD_POINTS};
 use crate::core::NULL_INDEX;
 use crate::distance::get_point_support;
 use crate::geometry::Capsule;
-use crate::hull::{get_hull_edges, get_hull_planes, get_hull_points, HullData};
+use crate::hull::{
+    get_hull_edges, get_hull_planes, get_hull_points, hull_2d, simplify_hull_2d, HullData, Point2D,
+};
 use crate::math_functions::{
-    abs_float, arbitrary_perp, cross, dot, length_squared, lerp, max_float, mul_sub, neg,
-    normalize, plane_separation, sub, transform_point, Transform, VEC3_ZERO,
+    abs_float, arbitrary_perp, cross, dot, length_squared, lerp, max_float, min_int, mul_sub, neg,
+    normalize, perp, plane_separation, sub, transform_point, Transform, Vec2, VEC3_ZERO,
 };
 
 /// Face directions for hull vs capsule. (static b3QueryFaceDirectionHullAndCapsule)
@@ -140,9 +144,86 @@ pub(crate) fn query_edge_direction_hull_and_capsule(
     }
 }
 
-/// Reduce manifold points to a maximum of 4. Modifies `points` in place.
+// _Static_assert( B3_MAX_MANIFOLD_POINTS >= 4, "must be 4 or more" );
+const _: () = assert!(MAX_MANIFOLD_POINTS >= 4, "must be 4 or more");
+
+/// Reduce manifold points to at most `MAX_MANIFOLD_POINTS`. Modifies `points` in place.
+/// C compiles one of two `b3ReduceManifoldPoints` bodies with
+/// `#if B3_MAX_MANIFOLD_POINTS == 4`; this selects the same body on the constant.
 /// (static b3ReduceManifoldPoints)
 pub(crate) fn reduce_manifold_points(
+    manifold: &mut LocalManifold,
+    capacity: i32,
+    points: &mut [LocalManifoldPoint],
+    count: i32,
+) {
+    if MAX_MANIFOLD_POINTS == 4 {
+        reduce_manifold_points_4(manifold, capacity, points, count);
+    } else {
+        reduce_manifold_points_hull(manifold, capacity, points, count);
+    }
+}
+
+/// `B3_MAX_MANIFOLD_POINTS > 4` body of b3ReduceManifoldPoints: build a 2D convex hull of
+/// the candidate points and simplify it to the target by dropping the vertices that
+/// contribute the least area.
+fn reduce_manifold_points_hull(
+    manifold: &mut LocalManifold,
+    capacity: i32,
+    points: &mut [LocalManifoldPoint],
+    count: i32,
+) {
+    if capacity < 4 {
+        return;
+    }
+
+    debug_assert!(count as usize <= MAX_CLIP_POINTS);
+
+    let target = min_int(capacity, MAX_MANIFOLD_POINTS as i32);
+
+    if count <= target {
+        for i in 0..count {
+            manifold.points[i as usize] = points[i as usize];
+        }
+
+        manifold.point_count = count;
+        return;
+    }
+
+    let normal = manifold.normal;
+    let u = perp(normal);
+    let v = cross(normal, u);
+    let origin = points[0].point;
+
+    let mut pts = [Point2D::default(); MAX_CLIP_POINTS];
+    for i in 0..count {
+        let d = sub(points[i as usize].point, origin);
+        pts[i as usize].p = Vec2 {
+            x: dot(d, u),
+            y: dot(d, v),
+        };
+        pts[i as usize].separation = points[i as usize].separation;
+        pts[i as usize].original_index = i;
+    }
+
+    let mut hull = [Point2D::default(); 2 * MAX_CLIP_POINTS];
+    let hull_count = hull_2d(&mut pts, count, &mut hull);
+    let final_count = simplify_hull_2d(&mut hull, hull_count, target);
+    debug_assert!(0 < final_count && final_count <= target);
+
+    for i in 0..final_count {
+        let index = hull[i as usize].original_index;
+        debug_assert!(0 <= index && index < count);
+        manifold.points[i as usize] = points[index as usize];
+    }
+
+    manifold.point_count = final_count;
+}
+
+/// Reduce the manifold points to a maximum of 4 points.
+/// Note: this modifies the input point array to improve performance
+/// (`B3_MAX_MANIFOLD_POINTS == 4` body of static b3ReduceManifoldPoints)
+fn reduce_manifold_points_4(
     manifold: &mut LocalManifold,
     capacity: i32,
     points: &mut [LocalManifoldPoint],

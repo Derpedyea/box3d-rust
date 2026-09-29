@@ -5,7 +5,7 @@
 
 use super::types::{get_compound_child, ChildGeometry, CompoundData, MAX_COMPOUND_MESH_MATERIALS};
 use crate::constants::MAX_SHAPE_CAST_POINTS;
-use crate::distance::{CastOutput, ShapeProxy, Sweep};
+use crate::distance::{compute_proxy_aabb, make_local_proxy, CastOutput, ShapeProxy, Sweep};
 use crate::dynamic_tree::BoxCastInput;
 use crate::geometry::{
     overlap_capsule, overlap_sphere, ray_cast_capsule, ray_cast_sphere, shape_cast_capsule,
@@ -13,9 +13,8 @@ use crate::geometry::{
 };
 use crate::hull::{overlap_hull, ray_cast_hull, shape_cast_hull};
 use crate::math_functions::{
-    aabb_transform, add, inv_rotate_vector, inv_transform_point, invert_transform, make_aabb,
-    make_matrix_from_quat, max, min, min_int, mul_mv, mul_transforms, rotate_vector, sub,
-    transform_point, Aabb, Transform, Vec3, VEC3_ZERO,
+    aabb_transform, inv_rotate_vector, inv_transform_point, make_aabb, min_int, mul_transforms,
+    rotate_vector, transform_point, Aabb, Transform, VEC3_ZERO,
 };
 use crate::mesh::{overlap_mesh, ray_cast_mesh, shape_cast_mesh};
 
@@ -27,36 +26,32 @@ pub fn compute_compound_aabb(shape: &CompoundData, transform: Transform) -> Aabb
 }
 
 /// Test overlap between a compound and a shape proxy. (b3OverlapCompound)
+///
+/// This is dealing with multiple transforms:
+/// - the compound shape transform
+/// - the compound child shape transforms
 pub fn overlap_compound(
     shape: &CompoundData,
     shape_transform: Transform,
     proxy: &ShapeProxy,
 ) -> bool {
+    debug_assert!(0 < proxy.count && proxy.count as usize <= MAX_SHAPE_CAST_POINTS);
+
     let mut overlap = false;
 
-    let mut aabb = Aabb {
-        lower_bound: proxy.points[0],
-        upper_bound: proxy.points[0],
-    };
-    for i in 1..proxy.count as usize {
-        aabb.lower_bound = min(aabb.lower_bound, proxy.points[i]);
-        aabb.upper_bound = max(aabb.upper_bound, proxy.points[i]);
-    }
+    // Use local proxy (proxy in the compound frame).
+    let local_proxy = make_local_proxy(proxy, shape_transform);
 
-    let r = Vec3 {
-        x: proxy.radius,
-        y: proxy.radius,
-        z: proxy.radius,
-    };
-    aabb.lower_bound = sub(aabb.lower_bound, r);
-    aabb.upper_bound = add(aabb.upper_bound, r);
+    let aabb = compute_proxy_aabb(&local_proxy);
 
+    // This query must be in the compound frame.
     shape
         .tree
         .query(aabb, !0u64, false, |_proxy_id, user_data| {
             let child_index = user_data as i32;
             let child = get_compound_child(shape, child_index);
-            let transform = mul_transforms(shape_transform, child.transform);
+            let transform = child.transform;
+            let proxy = &local_proxy;
 
             let child_overlap = match child.geometry {
                 ChildGeometry::Capsule(ref capsule) => overlap_capsule(capsule, transform, proxy),
@@ -86,6 +81,7 @@ pub fn ray_cast_compound(shape: &CompoundData, input: &RayCastInput) -> CastOutp
             let child_index = user_data as i32;
             let child = get_compound_child(shape, child_index);
 
+            // Get the input in child local space.
             let local_input = RayCastInput {
                 origin: inv_transform_point(child.transform, ray_input.origin),
                 translation: inv_rotate_vector(child.transform.q, ray_input.translation),
@@ -158,20 +154,13 @@ pub fn shape_cast_compound(shape: &CompoundData, input: &ShapeCastInput) -> Cast
             let child_index = user_data as i32;
             let child = get_compound_child(shape, child_index);
 
-            let mut local_input = *input;
-            local_input.max_fraction = box_input.max_fraction;
-
-            let mut local_points = [Vec3::default(); MAX_SHAPE_CAST_POINTS];
-            local_input.proxy.count = min_int(input.proxy.count, MAX_SHAPE_CAST_POINTS as i32);
-
-            let inv_transform = invert_transform(child.transform);
-            let r = make_matrix_from_quat(inv_transform.q);
-
-            for i in 0..local_input.proxy.count as usize {
-                local_points[i] = add(mul_mv(r, input.proxy.points[i]), inv_transform.p);
-            }
-            local_input.proxy.points = local_points;
-            local_input.translation = mul_mv(r, input.translation);
+            // Get the input in the child local space.
+            let local_input = ShapeCastInput {
+                proxy: make_local_proxy(&input.proxy, child.transform),
+                translation: inv_rotate_vector(child.transform.q, input.translation),
+                max_fraction: box_input.max_fraction,
+                can_encroach: input.can_encroach,
+            };
 
             let mut output = match child.geometry {
                 ChildGeometry::Capsule(ref capsule) => {

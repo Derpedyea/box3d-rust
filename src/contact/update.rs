@@ -215,6 +215,10 @@ fn compute_convex_manifold(
     let matrix_a = make_matrix_from_quat(xf_a.q);
     {
         let manifold = &mut world.contacts[contact_id as usize].manifolds[0];
+        debug_assert!(
+            0 < geom_manifold.point_count
+                && geom_manifold.point_count as usize <= MAX_MANIFOLD_POINTS
+        );
         manifold.point_count = geom_manifold.point_count;
         manifold.normal = mul_mv(matrix_a, geom_manifold.normal);
 

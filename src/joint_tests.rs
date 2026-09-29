@@ -492,3 +492,58 @@ fn sleeping_islands_merge_on_new_joint() {
         .iter()
         .any(|sim| sim.joint_id == raw));
 }
+
+/// Issue #117: a joint created with collide_connected false must clear contacts
+/// that already exist between the two bodies. (TestCreateJointClearsContacts)
+#[test]
+fn test_create_joint_clears_contacts() {
+    use crate::body::body_get_contact_capacity;
+    use crate::hull::make_box_hull;
+
+    let mut world_def = default_world_def();
+    world_def.gravity = Vec3 {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
+    let mut world = World::new(&world_def);
+
+    let mut body_def = default_body_def();
+    body_def.type_ = BodyType::Dynamic;
+
+    body_def.position = Pos {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
+    let body_id_a = create_body(&mut world, &body_def);
+
+    // Overlapping so a touching contact forms
+    body_def.position = Pos {
+        x: 0.5,
+        y: 0.0,
+        z: 0.0,
+    };
+    let body_id_b = create_body(&mut world, &body_def);
+
+    let mut shape_def = default_shape_def();
+    shape_def.density = 1.0;
+    let box_hull = make_box_hull(0.5, 0.5, 0.5);
+    create_hull_shape(&mut world, body_id_a, &shape_def, &box_hull.base);
+    create_hull_shape(&mut world, body_id_b, &shape_def, &box_hull.base);
+
+    world.step(1.0 / 60.0, 4);
+    assert!(body_get_contact_capacity(&world, body_id_a) > 0);
+
+    let mut joint_def = default_revolute_joint_def();
+    joint_def.base.body_id_a = body_id_a;
+    joint_def.base.body_id_b = body_id_b;
+    joint_def.base.collide_connected = false;
+    create_revolute_joint(&mut world, &joint_def);
+
+    assert_eq!(body_get_contact_capacity(&world, body_id_a), 0);
+    assert_eq!(body_get_contact_capacity(&world, body_id_b), 0);
+
+    world.step(1.0 / 60.0, 4);
+    assert_eq!(body_get_contact_capacity(&world, body_id_a), 0);
+}

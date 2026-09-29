@@ -266,13 +266,13 @@ pub(super) fn finalize_bodies(
         {
             world.bodies[body_id as usize].sleep_time = 0.0;
 
-            let safety_factor = 0.5;
+            let safety_factor = world.bodies[body_id as usize].safety_factor;
             let max_motion = max_float(max_delta_position, max_velocity * time_step);
             if body_type == BodyType::Dynamic
                 && enable_continuous
                 && max_motion > safety_factor * sim.min_extent
             {
-                // Retained for debug draw; also drives AABB handling below.
+                // This flag is used for debug draw and contact recycling.
                 sim.flags |= body_flags::IS_FAST;
 
                 world.solver_sets[AWAKE_SET as usize].body_states[sim_index] = state;

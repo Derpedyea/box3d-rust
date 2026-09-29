@@ -61,6 +61,12 @@ pub struct BodyDef {
     pub gravity_scale: f32,
     /// Sleep speed threshold, default is 0.05 meters per second.
     pub sleep_threshold: f32,
+    /// Continuous collision safety factor. The solver only uses continuous collision if there is a
+    /// risk of tunneling. If the body is moving fast enough to risk tunneling then it is considered a "fast body".
+    /// This improves performance and prevents movement hitches. If a body moving N meter risks tunneling, then the
+    /// body will be considered fast if it moves more than a safetyFactor times N meters over one full time step.
+    /// Non-dimensional. Recommended range [0.01, 0.5]. Default is 0.5 for high performance with low tunneling risk.
+    pub safety_factor: f32,
     /// Optional body name for debugging.
     pub name: String,
     /// Application specific body data.
@@ -95,6 +101,7 @@ pub fn default_body_def() -> BodyDef {
         angular_damping: 0.0,
         gravity_scale: 1.0,
         sleep_threshold: 0.05 * get_length_units_per_meter(),
+        safety_factor: 0.5,
         name: String::new(),
         user_data: 0,
         motion_locks: MotionLocks::default(),

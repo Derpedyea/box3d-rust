@@ -139,7 +139,8 @@ fn finalize_hash(hull: &mut HullData) {
     hull.hash = hash64_non_zero(&bytes);
 }
 
-/// Create a convex hull from a point cloud. (b3CreateHull)
+/// Create a convex hull from a point cloud. This can fail if `MAX_HULL_VERTICES`,
+/// `MAX_HULL_FACES`, or `MAX_HULL_EDGES` is exceeded. (b3CreateHull)
 pub fn create_hull(points: &[Vec3], max_vertex_count: i32) -> Option<HullData> {
     let point_count = points.len() as i32;
     if point_count < 4 {

@@ -155,6 +155,9 @@ pub fn body_set_mass_data(world: &mut World, body_id: BodyId, mass_data: MassDat
 
     // Update extents using supplied mass center.
     update_body_extents_from_shapes(world, body_index, mass_data.center);
+
+    // When the center of mass changes, any cached contact manifold becomes invalid.
+    super::mass::invalidate_body_contact_transforms(world, body_index);
 }
 
 /// (b3Body_GetLinearVelocity)
@@ -329,6 +332,31 @@ pub fn body_set_sleep_threshold(world: &mut World, body_id: BodyId, sleep_thresh
 pub fn body_get_sleep_threshold(world: &World, body_id: BodyId) -> f32 {
     let body_index = get_body_full_id(world, body_id);
     world.bodies[body_index as usize].sleep_threshold
+}
+
+/// Set the continuous collision safety factor. Smaller is safer but can lead to hitching.
+/// Recommended range [0.01, 0.5]. Non-dimensional. (b3Body_SetSafetyFactor)
+pub fn body_set_safety_factor(world: &mut World, body_id: BodyId, safety_factor: f32) {
+    debug_assert!(is_valid_float(safety_factor) && safety_factor >= 0.0);
+
+    // b3GetUnlockedWorld
+    debug_assert!(!world.locked);
+    if world.locked {
+        return;
+    }
+
+    crate::recording::with_recording(world, |rec| {
+        rec.write_body_set_safety_factor(body_id, safety_factor);
+    });
+
+    let body_index = get_body_full_id(world, body_id);
+    world.bodies[body_index as usize].safety_factor = safety_factor;
+}
+
+/// Get the continuous collision safety factor. Non-dimensional. (b3Body_GetSafetyFactor)
+pub fn body_get_safety_factor(world: &World, body_id: BodyId) -> f32 {
+    let body_index = get_body_full_id(world, body_id);
+    world.bodies[body_index as usize].safety_factor
 }
 
 /// (b3Body_EnableSleep)

@@ -61,6 +61,18 @@ pub fn is_double_precision() -> bool {
     cfg!(feature = "double-precision")
 }
 
+// _Static_assert( B3_MAX_MANIFOLD_POINTS >= 4, "B3_MAX_MANIFOLD_POINTS must be at least 4" );
+const _: () = assert!(
+    crate::constants::MAX_MANIFOLD_POINTS >= 4,
+    "MAX_MANIFOLD_POINTS must be at least 4"
+);
+
+/// @return the value of `MAX_MANIFOLD_POINTS` the library was compiled with. Useful for
+/// an ABI test. (b3GetMaxManifoldPoints)
+pub fn get_max_manifold_points() -> i32 {
+    crate::constants::MAX_MANIFOLD_POINTS as i32
+}
+
 // ---------------------------------------------------------------------------
 // Bit helpers (ctz.h). The C versions are thin wrappers over compiler
 // intrinsics (__builtin_ctz / _BitScanForward / __popcnt). The count-leading

@@ -13,25 +13,23 @@ use crate::math_functions::{Transform, Vec2, TRANSFORM_IDENTITY, VEC2_ZERO};
 pub enum BoneId {
     Pelvis = 0,
     Spine01 = 1,
-    Spine02 = 2,
-    Spine03 = 3,
-    Neck = 4,
-    Head = 5,
-    ThighL = 6,
-    CalfL = 7,
-    ThighR = 8,
-    CalfR = 9,
-    UpperArmL = 10,
-    LowerArmL = 11,
-    UpperArmR = 12,
-    LowerArmR = 13,
+    Spine03 = 2,
+    Neck = 3,
+    ThighL = 4,
+    CalfL = 5,
+    ThighR = 6,
+    CalfR = 7,
+    UpperArmL = 8,
+    LowerArmL = 9,
+    UpperArmR = 10,
+    LowerArmR = 11,
 }
 
 /// Number of bones in a human ragdoll. (bone_count)
-pub const BONE_COUNT: usize = 14;
+pub const BONE_COUNT: usize = 12;
 
 /// Max filter joints that disable selected bone-bone collisions. (FILTER_JOINT_COUNT)
-pub const FILTER_JOINT_COUNT: usize = 8;
+pub const FILTER_JOINT_COUNT: usize = 9;
 
 /// Hex colors used when `colorize` is true. (b3HexColor / types.h)
 pub const COLOR_MEDIUM_TURQUOISE: u32 = 0x48D1CC;

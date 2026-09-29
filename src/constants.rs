@@ -93,7 +93,16 @@ pub const PARALLEL_EDGE_TOL: f32 = 0.005;
 pub const MAX_SHAPE_CAST_POINTS: usize = MAX_HULL_VERTICES as usize;
 
 /// The maximum number of contact points between two touching shapes.
+/// The default and minimum is 4 and this case uses a fast approximate hull to reduce the
+/// point count. A larger value builds a 2D convex hull of the candidate points and then
+/// simplifies it to the target by dropping the vertices that contribute the least area.
+/// Useful for testing, but I don't recommend shipping with it adjusted.
+/// WARNING: if you change this you risk breaking ABI and a corrupted runtime.
 /// (B3_MAX_MANIFOLD_POINTS)
+///
+/// C makes this `#ifndef`-overridable at build time; Rust has no preprocessor, so the
+/// value is fixed here. Code that C guards with `#if B3_MAX_MANIFOLD_POINTS == 4` is
+/// ported as a constant branch on this value so both paths stay faithful to C.
 pub const MAX_MANIFOLD_POINTS: usize = 4;
 
 /// Increase this if your application needs more accurate restitution. Doing so will

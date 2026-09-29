@@ -36,6 +36,7 @@ pub fn ser_body(buf: &mut RecBuffer, b: &Body) {
     buf.append_f32(b.sleep_threshold);
     buf.append_f32(b.sleep_time);
     buf.append_f32(b.sleep_velocity);
+    buf.append_f32(b.safety_factor);
     buf.append_f32(b.mass);
     buf.append_matrix3(b.inertia);
     buf.append_i32(b.body_move_index);
@@ -64,6 +65,7 @@ pub fn des_body(r: &mut SnapReader<'_>) -> Body {
         sleep_threshold: r.f32(),
         sleep_time: r.f32(),
         sleep_velocity: r.f32(),
+        safety_factor: r.f32(),
         mass: r.f32(),
         inertia: r.matrix3(),
         body_move_index: r.i32(),

@@ -99,8 +99,6 @@ fn collide_task(world: &mut World, contact_indices: &[i32], worker_index: i32) {
         let is_static_b = world.bodies[body_id_b as usize].type_ == BodyType::Static;
         let was_touching =
             (world.contacts[contact_index as usize].flags & contact_flags::SIM_TOUCHING) != 0;
-        let is_mesh_contact =
-            (world.contacts[contact_index as usize].flags & contact_flags::SIM_MESH_CONTACT) != 0;
 
         let set_a = world.bodies[body_id_a as usize].set_index;
         let set_b = world.bodies[body_id_b as usize].set_index;
@@ -132,7 +130,7 @@ fn collide_task(world: &mut World, contact_indices: &[i32], worker_index: i32) {
         };
 
         let flags = world.contacts[contact_index as usize].flags;
-        if (!is_fast || !is_mesh_contact)
+        if !is_fast
             && recycle_distance > 0.0
             && (flags & contact_flags::RELATIVE_TRANSFORM_VALID) != 0
             && (flags & contact_flags::RECYCLE) != 0

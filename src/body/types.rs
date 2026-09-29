@@ -92,6 +92,7 @@ pub struct Body {
     pub sleep_threshold: f32,
     pub sleep_time: f32,
     pub sleep_velocity: f32,
+    pub safety_factor: f32,
     pub mass: f32,
 
     /// Local space inertia
@@ -131,6 +132,7 @@ impl Default for Body {
             sleep_threshold: 0.0,
             sleep_time: 0.0,
             sleep_velocity: 0.0,
+            safety_factor: 0.0,
             mass: 0.0,
             inertia: MAT3_ZERO,
             body_move_index: NULL_INDEX,

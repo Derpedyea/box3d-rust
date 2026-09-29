@@ -5,8 +5,9 @@
 //! SPDX-License-Identifier: MIT
 
 use super::{
-    check_edge_contact, ensure_small, exact_quat, exact_rotation, hull_edge_segment,
-    min_separation, v, AXIS_X, AXIS_Y, HALF_DIAGONAL, HALF_ROOT2, TILT_ANGLES, TILT_AXES,
+    check_edge_contact, ensure_face_points, ensure_small, exact_quat, exact_rotation,
+    hull_edge_segment, min_separation, v, AXIS_X, AXIS_Y, HALF_DIAGONAL, HALF_ROOT2, TILT_ANGLES,
+    TILT_AXES,
 };
 use crate::constants::speculative_distance;
 use crate::distance::SimplexCache;
@@ -151,7 +152,7 @@ fn triangle_parallel_edge_test() {
                 true,
             );
 
-            assert_eq!(manifold.point_count, 4);
+            ensure_face_points(manifold.point_count);
             assert_eq!(cache.type_, SeparatingFeature::FaceAxisA as u8);
             assert!(dot(manifold.normal, AXIS_Y) > 0.99);
 

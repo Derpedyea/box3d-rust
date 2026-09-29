@@ -33,8 +33,8 @@ mod tests {
         create_human(&mut human, &mut world, POS_ZERO, 5.0, 1.0, 0.7, 1, 0, false);
         assert!(human.is_spawned);
         assert!(!human.bones[BoneId::Pelvis as usize].body_id.is_null());
-        assert!(!human.bones[BoneId::Head as usize].joint_id.is_null());
-        assert_eq!(human.filter_joint_count, 1);
+        assert!(!human.bones[BoneId::Neck as usize].joint_id.is_null());
+        assert_eq!(human.filter_joint_count, 3);
         destroy_human(&mut human, &mut world);
         assert!(!human.is_spawned);
     }

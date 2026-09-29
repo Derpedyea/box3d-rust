@@ -89,8 +89,26 @@ impl World {
 
         crate::contact::collide(self, time_step);
 
+        // C finishes the user tree task (and validates the trees) inside b3Solve's refit
+        // stage, which is skipped when the step is zero or nothing is awake. The serial
+        // port rebuilds the trees inline in update_broad_phase_pairs, so this flag stands
+        // in for `world->userTreeTask` still being outstanding after b3Solve.
+        // With C's default serial scheduler (b3DefaultAddTaskFcn runs the task inline and
+        // returns NULL) `userTreeTask` is NULL, so C never reaches this validation; the Rust
+        // check mirrors C running with a scheduler that actually enqueues the tree task.
+        let awake_set_empty = self.solver_sets[crate::solver_set::AWAKE_SET as usize]
+            .body_sims
+            .is_empty();
+        let solve_finishes_tree_task = time_step > 0.0 && !awake_set_empty;
+        let tree_task_pending = !solve_finishes_tree_task;
+
         if time_step > 0.0 {
             solve(self, &context);
+        }
+
+        // Finish the tree task in case b3Solve didn't finish it
+        if tree_task_pending {
+            self.broad_phase.validate_no_enlarged();
         }
 
         // Update sensors (after solve; C physics_world.c runs b3OverlapSensors here)

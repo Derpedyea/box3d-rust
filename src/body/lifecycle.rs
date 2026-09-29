@@ -212,6 +212,7 @@ pub fn create_body(world: &mut World, def: &crate::types::BodyDef) -> BodyId {
     debug_assert!(is_valid_float(def.linear_damping) && def.linear_damping >= 0.0);
     debug_assert!(is_valid_float(def.angular_damping) && def.angular_damping >= 0.0);
     debug_assert!(is_valid_float(def.sleep_threshold) && def.sleep_threshold >= 0.0);
+    debug_assert!(is_valid_float(def.safety_factor) && def.safety_factor >= 0.0);
     debug_assert!(is_valid_float(def.gravity_scale));
 
     debug_assert!(!world.locked);
@@ -365,6 +366,7 @@ pub fn create_body(world: &mut World, def: &crate::types::BodyDef) -> BodyId {
         body.sleep_threshold = def.sleep_threshold;
         body.sleep_time = 0.0;
         body.sleep_velocity = 0.0;
+        body.safety_factor = def.safety_factor;
         body.mass = 0.0;
         body.inertia = crate::math_functions::MAT3_ZERO;
         body.name_id = name_id;
