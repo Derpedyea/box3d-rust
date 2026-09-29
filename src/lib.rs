@@ -114,6 +114,7 @@ pub mod math_functions;
 pub mod mesh;
 pub mod mover;
 pub mod name_cache;
+mod parallel_for;
 pub mod rapidhash;
 pub mod recording;
 pub mod sensor;
@@ -184,6 +185,9 @@ mod debug_draw_tests;
 
 #[cfg(test)]
 mod distance_tests;
+
+#[cfg(test)]
+mod dynamic_tree_box2d_tests;
 
 #[cfg(test)]
 mod dynamic_tree_tests;

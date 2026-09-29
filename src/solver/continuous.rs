@@ -330,9 +330,17 @@ pub(super) fn solve_continuous(world: &mut World, body_sim_index: i32) {
                     lower_bound: sub(aabb.lower_bound, aabb_margin),
                     upper_bound: add(aabb.upper_bound, aabb_margin),
                 };
-                shape.flags |= shape_flags::ENLARGED_AABB;
+                let proxy_key = shape.proxy_key;
+                let fat_aabb = shape.fat_aabb;
+
                 world.solver_sets[AWAKE_SET as usize].body_sims[sim_index].flags |=
                     body_flags::ENLARGE_BOUNDS;
+
+                // Regular bodies mark the hierarchy as moved using atomic operations.
+                // Bullets are handled separately at a later stage.
+                if !is_bullet {
+                    world.broad_phase.mark_proxy_moved(proxy_key, fat_aabb);
+                }
             }
             shape_id = world.shapes[shape_id as usize].next_shape_id;
         }
@@ -357,9 +365,15 @@ pub(super) fn solve_continuous(world: &mut World, body_sim_index: i32) {
                     lower_bound: sub(shape.aabb.lower_bound, aabb_margin),
                     upper_bound: add(shape.aabb.upper_bound, aabb_margin),
                 };
-                shape.flags |= shape_flags::ENLARGED_AABB;
+                let proxy_key = shape.proxy_key;
+                let fat_aabb = shape.fat_aabb;
+
                 world.solver_sets[AWAKE_SET as usize].body_sims[sim_index].flags |=
                     body_flags::ENLARGE_BOUNDS;
+
+                if !is_bullet {
+                    world.broad_phase.mark_proxy_moved(proxy_key, fat_aabb);
+                }
             }
             shape_id = world.shapes[shape_id as usize].next_shape_id;
         }

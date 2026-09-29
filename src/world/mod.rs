@@ -134,8 +134,8 @@ pub struct TaskContext {
     /// hit_event_bit_set this step.
     pub has_hit_events: bool,
 
-    /// Track bodies with shapes that have enlarged AABBs.
-    pub enlarged_sim_bit_set: BitSet,
+    /// Broad-phase pairs.
+    pub pair_keys: Vec<u64>,
 
     /// Used to put islands to sleep.
     pub awake_island_bit_set: BitSet,
@@ -173,7 +173,7 @@ impl Default for TaskContext {
             joint_state_bit_set: BitSet::default(),
             hit_event_bit_set: BitSet::default(),
             has_hit_events: false,
-            enlarged_sim_bit_set: BitSet::default(),
+            pair_keys: Vec::with_capacity(64),
             awake_island_bit_set: BitSet::default(),
             split_sleep_time: 0.0,
             split_island_id: 0,
@@ -235,6 +235,10 @@ pub struct World {
 
     /// Sparse array of shapes.
     pub shapes: Vec<Shape>,
+
+    /// Compound shapes are static only, so only the broad-phase static pass can meet one.
+    /// This lets a world without compounds skip the shape type read in the pair batch.
+    pub compound_shape_count: i32,
 
     /// Content-keyed shared hull store. (world->hullDatabase)
     pub hull_database: HullDatabase,
@@ -450,6 +454,7 @@ impl World {
             islands: Vec::with_capacity(max_int(16, def.capacity.dynamic_body_count) as usize),
             shape_id_pool: IdPool::new(),
             shapes: Vec::with_capacity(shape_capacity),
+            compound_shape_count: 0,
             hull_database: HullDatabase::new(),
             names: NameCache::new(),
             sensors: Vec::with_capacity(4),

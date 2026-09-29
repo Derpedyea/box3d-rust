@@ -4,7 +4,7 @@
 //! SPDX-License-Identifier: MIT
 
 use crate::bitset::BitSet;
-use crate::dynamic_tree::{DynamicTree, TreeNode};
+use crate::dynamic_tree::{DynamicTree, TreeNode, TreeProxy};
 use crate::id_pool::IdPool;
 use crate::recording::buffer::{RecBuffer, SnapReader};
 use crate::table::{HashSet, SetItem};
@@ -111,71 +111,110 @@ pub fn des_hash_set(r: &mut SnapReader<'_>) -> HashSet {
     HashSet { items, count: cnt }
 }
 
+// DynamicTree: version, scalars, then nodes and parents to nodeEnd and proxies at capacity.
+// The empty node and the free pairs are sentinels below the end and travel as they are. Only
+// the stale tail above the end, the spare array and the rebuild scratch are skipped.
 pub fn ser_tree(buf: &mut RecBuffer, tree: &DynamicTree) {
     buf.append_u64(tree.version);
-    buf.append_i32(tree.root);
-    buf.append_i32(tree.node_count);
-    buf.append_i32(tree.nodes.len() as i32); // nodeCapacity
-    buf.append_i32(tree.free_list);
+    buf.append_i32(tree.node_end);
+    buf.append_i32(tree.pair_free_list);
     buf.append_i32(tree.proxy_count);
-    for node in &tree.nodes {
-        ser_tree_node(buf, node);
+    buf.append_i32(tree.proxy_capacity());
+    buf.append_i32(tree.proxy_free_list);
+    buf.append_i32(if tree.dfs_ordered { 1 } else { 0 });
+    if tree.node_end > 0 {
+        for node in &tree.nodes[..tree.node_end as usize] {
+            ser_tree_node(buf, node);
+        }
+        for &parent in &tree.parents[..tree.node_end as usize] {
+            buf.append_i32(parent);
+        }
+    }
+    for proxy in &tree.proxies {
+        ser_tree_proxy(buf, proxy);
     }
 }
 
 fn ser_tree_node(buf: &mut RecBuffer, n: &TreeNode) {
     buf.append_aabb(n.aabb);
-    buf.append_u64(n.category_bits);
-    buf.append_i32(n.child1);
-    buf.append_i32(n.child2);
-    buf.append_u64(n.user_data);
-    buf.append_i32(n.parent);
-    buf.append_i32(n.next);
-    buf.append_u16(n.height);
-    buf.append_u16(n.flags);
+    buf.append_u32(n.flag_index);
+    buf.append_i32(n.height);
+}
+
+fn ser_tree_proxy(buf: &mut RecBuffer, p: &TreeProxy) {
+    buf.append_u64(p.user_data);
+    buf.append_u64(p.category_bits);
+    buf.append_i32(p.node);
+    buf.append_i32(p.next);
 }
 
 pub fn des_tree(r: &mut SnapReader<'_>) -> DynamicTree {
     let version = r.u64();
-    let root = r.i32();
-    let node_count = r.i32();
-    let node_capacity = r.i32();
-    let free_list = r.i32();
+    let node_end = r.i32();
+    let pair_free_list = r.i32();
     let proxy_count = r.i32();
-    if r.ok && !r.check_count(node_capacity, 64, 64) {
+    let proxy_capacity = r.i32();
+    let proxy_free_list = r.i32();
+    let dfs_ordered = r.i32() != 0;
+
+    let node_size = core::mem::size_of::<TreeNode>() as i32;
+    let proxy_size = core::mem::size_of::<TreeProxy>() as i32;
+    if r.ok && !r.check_count(node_end, node_size, node_size) {
         r.ok = false;
     }
-    if !r.ok {
-        return DynamicTree::new(0);
+    if r.ok && !r.check_count(proxy_capacity, proxy_size, proxy_size) {
+        r.ok = false;
     }
-    let mut nodes = Vec::with_capacity(node_capacity.max(0) as usize);
-    for _ in 0..node_capacity.max(0) {
+    if r.ok && (node_end < 2 || (node_end & 1) != 0 || proxy_capacity < 1) {
+        r.ok = false;
+    }
+
+    // Free existing allocation including the spare array and any rebuild scratch
+    if !r.ok {
+        return DynamicTree::zeroed();
+    }
+
+    // The node capacity is restored as the node end, like C.
+    let mut nodes = Vec::with_capacity(node_end as usize);
+    for _ in 0..node_end {
         nodes.push(des_tree_node(r));
     }
-    DynamicTree {
-        version,
-        nodes,
-        root,
-        node_count,
-        free_list,
-        proxy_count,
-        leaf_indices: Vec::new(),
-        leaf_centers: Vec::new(),
-        rebuild_capacity: 0,
+    let mut parents = Vec::with_capacity(node_end as usize);
+    for _ in 0..node_end {
+        parents.push(r.i32());
     }
+    let mut proxies = Vec::with_capacity(proxy_capacity as usize);
+    for _ in 0..proxy_capacity {
+        proxies.push(des_tree_proxy(r));
+    }
+
+    let mut tree = DynamicTree::zeroed();
+    tree.version = version;
+    tree.nodes = nodes;
+    tree.parents = parents;
+    tree.proxies = proxies;
+    tree.node_end = node_end;
+    tree.pair_free_list = pair_free_list;
+    tree.proxy_count = proxy_count;
+    tree.proxy_free_list = proxy_free_list;
+    tree.dfs_ordered = dfs_ordered;
+    tree
 }
 
 fn des_tree_node(r: &mut SnapReader<'_>) -> TreeNode {
     TreeNode {
         aabb: r.aabb(),
-        category_bits: r.u64(),
-        child1: r.i32(),
-        child2: r.i32(),
+        flag_index: r.u32(),
+        height: r.i32(),
+    }
+}
+
+fn des_tree_proxy(r: &mut SnapReader<'_>) -> TreeProxy {
+    TreeProxy {
         user_data: r.u64(),
-        parent: r.i32(),
+        category_bits: r.u64(),
+        node: r.i32(),
         next: r.i32(),
-        height: r.u16(),
-        flags: r.u16(),
     }
 }
 
@@ -193,6 +232,7 @@ pub fn ser_world_config(buf: &mut RecBuffer, world: &World) {
     buf.append_f32(world.inv_h);
     buf.append_f32(world.inv_dt);
     buf.append_i32(world.end_event_array_index);
+    buf.append_i32(world.compound_shape_count);
     ser_capacity(buf, &world.max_capacity);
     let mut flags = 0u8;
     if world.enable_sleep {
@@ -224,6 +264,7 @@ pub fn des_world_config(r: &mut SnapReader<'_>, world: &mut World) {
     world.inv_h = r.f32();
     world.inv_dt = r.f32();
     world.end_event_array_index = r.i32();
+    world.compound_shape_count = r.i32();
     world.max_capacity = des_capacity(r);
     let flags = r.u8();
     world.enable_sleep = flags & 0x01 != 0;

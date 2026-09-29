@@ -105,14 +105,19 @@ fn update_pairs_creates_contact_for_overlap() {
     };
     create_sphere_shape(&mut world, ball, &ball_shape, &sphere);
 
-    // Shape create with invoke_contact_creation buffered moves; update pairs.
+    // Shape create marked the new proxies as moved; update pairs.
     update_broad_phase_pairs(&mut world);
 
     assert_eq!(
         world.solver_sets[AWAKE_SET as usize].contact_indices.len(),
         1
     );
-    assert!(world.broad_phase.move_array.is_empty());
+    // The pair update clears the static marks and the tree rebuild clears the others.
+    assert!(world
+        .broad_phase
+        .trees
+        .iter()
+        .all(|tree| !tree.has_tree_moved()));
 
     // Destroying the ball shape removes the contact.
     let shape_id = {

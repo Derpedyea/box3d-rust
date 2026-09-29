@@ -24,13 +24,16 @@ use pods::*;
 
 /// Snapshot image magic 'BNS3'. (B3_SNAP_MAGIC)
 pub const SNAP_MAGIC: u32 = 0x3353_4E42;
-/// Snapshot format version — v2 added the name cache, v3 added `Body::safety_factor`.
+/// Snapshot format version — v2 added the name cache, v3 added `Body::safety_factor`, v5
+/// moved the broad phase to the tree against tree pair traversal (move buffer removed).
 /// (B3_SNAP_VERSION)
-pub const SNAP_VERSION: u32 = 3;
+pub const SNAP_VERSION: u32 = 5;
 /// Rust field-layout version — bump when serialized record layouts change.
 /// v2: `Body` record gained `safety_factor` (C gets the equivalent change for free because
 /// b3ComputeLayoutHash hashes `sizeof( b3Body )`).
-pub const SNAP_LAYOUT_VERSION: u32 = 2;
+/// v3: the tree record gained parents and proxies with the new 32-byte node (C: sizeof(
+/// b3TreeNode ) changes and b3ComputeLayoutHash mixes in sizeof( b3TreeProxy )).
+pub const SNAP_LAYOUT_VERSION: u32 = 3;
 
 pub const SNAP_FLAG_VALIDATION: u32 = 0x1;
 pub const SNAP_FLAG_DOUBLE_PRECISION: u32 = 0x2;
@@ -125,10 +128,6 @@ pub fn serialize_world(world: &World, buf: &mut RecBuffer, registry: &mut Geomet
     for t in 0..BODY_TYPE_COUNT {
         ser_tree(buf, &world.broad_phase.trees[t]);
     }
-    for t in 0..BODY_TYPE_COUNT {
-        ser_bit_set(buf, &world.broad_phase.moved_proxies[t]);
-    }
-    ser_i32_array(buf, &world.broad_phase.move_array);
     ser_hash_set(buf, &world.broad_phase.pair_set);
 
     for c in 0..GRAPH_COLOR_COUNT as usize {
@@ -329,11 +328,9 @@ pub fn deserialize_into_shell(
     for t in 0..BODY_TYPE_COUNT {
         world.broad_phase.trees[t] = des_tree(&mut r);
     }
-    for t in 0..BODY_TYPE_COUNT {
-        world.broad_phase.moved_proxies[t] = des_bit_set(&mut r);
-    }
-    world.broad_phase.move_array = des_i32_array(&mut r);
     world.broad_phase.pair_set = des_hash_set(&mut r);
+    // The gathered moved siblings are per step scratch and stay empty
+    world.broad_phase.moved_siblings.clear();
 
     for c in 0..GRAPH_COLOR_COUNT as usize {
         world.constraint_graph.colors[c] = des_graph_color(&mut r, c == OVERFLOW_INDEX as usize);

@@ -7,10 +7,10 @@
 
 use super::types::{
     CompoundCapsule, CompoundData, CompoundSphere, HullInstance, MeshInstance, COMPOUND_DATA_SIZE,
-    DYNAMIC_TREE_SIZE, MAX_COMPOUND_MESH_MATERIALS,
+    COMPOUND_TREE_OFFSET, MAX_COMPOUND_MESH_MATERIALS,
 };
-use crate::dynamic_tree::{DynamicTree, TreeNode, ALLOCATED_NODE, LEAF_NODE};
-use crate::math_functions::{Aabb, Quat, Transform, Vec3};
+use crate::dynamic_tree::{write_tree_header, write_tree_node, write_tree_proxy};
+use crate::math_functions::{Quat, Transform, Vec3};
 
 fn write_u64(buf: &mut Vec<u8>, v: u64) {
     buf.extend_from_slice(&v.to_le_bytes());
@@ -37,65 +37,22 @@ fn write_transform(buf: &mut Vec<u8>, t: Transform) {
     write_vec3(buf, t.p);
     write_quat(buf, t.q);
 }
-fn write_aabb(buf: &mut Vec<u8>, a: Aabb) {
-    write_vec3(buf, a.lower_bound);
-    write_vec3(buf, a.upper_bound);
-}
 fn pad_to(buf: &mut Vec<u8>, len: usize) {
     if buf.len() < len {
         buf.resize(len, 0);
     }
 }
 
-fn write_tree_node(buf: &mut Vec<u8>, node: &TreeNode) {
-    write_aabb(buf, node.aabb);
-    write_u64(buf, node.category_bits);
-    if node.flags & LEAF_NODE != 0 {
-        write_u64(buf, node.user_data);
-    } else {
-        write_i32(buf, node.child1);
-        write_i32(buf, node.child2);
-    }
-    // parent/next union: free nodes use next; allocated use parent
-    if node.flags & ALLOCATED_NODE != 0 {
-        write_i32(buf, node.parent);
-    } else {
-        write_i32(buf, node.next);
-    }
-    buf.extend_from_slice(&node.height.to_le_bytes());
-    buf.extend_from_slice(&node.flags.to_le_bytes());
-}
-
-fn write_dynamic_tree_header(buf: &mut Vec<u8>, tree: &DynamicTree, nodes_ptr_zeroed: bool) {
-    let start = buf.len();
-    write_u64(buf, tree.version());
-    // nodes pointer — scrubbed to null for serialization
-    if nodes_ptr_zeroed {
-        buf.extend_from_slice(&0u64.to_le_bytes());
-    } else {
-        buf.extend_from_slice(&0u64.to_le_bytes());
-    }
-    write_i32(buf, tree.root);
-    write_i32(buf, tree.node_count());
-    write_i32(buf, tree.node_capacity());
-    write_i32(buf, tree.proxy_count());
-    write_i32(buf, tree.free_list);
-    // pad to 8 for leafIndices*
-    pad_to(buf, start + 40);
-    // leafIndices, leafBoxes, leafCenters, binIndices — all null
-    buf.extend_from_slice(&0u64.to_le_bytes());
-    buf.extend_from_slice(&0u64.to_le_bytes());
-    buf.extend_from_slice(&0u64.to_le_bytes());
-    buf.extend_from_slice(&0u64.to_le_bytes());
-    write_i32(buf, tree.rebuild_capacity);
-    pad_to(buf, start + DYNAMIC_TREE_SIZE);
-}
-
 fn write_compound_header(buf: &mut Vec<u8>, c: &CompoundData) {
     write_u64(buf, c.version);
     write_i32(buf, c.byte_count);
     write_i32(buf, c.node_offset);
-    write_dynamic_tree_header(buf, &c.tree, true);
+    write_i32(buf, c.proxy_offset);
+    // The embedded b3DynamicTree is 8 byte aligned.
+    pad_to(buf, COMPOUND_TREE_OFFSET);
+    // The baked tree header: pointers scrubbed to null before serialization, the node
+    // capacity trimmed to the node end (the tree arrays were truncated when baked).
+    write_tree_header(buf, &c.tree, c.tree.node_capacity());
     write_i32(buf, c.material_offset);
     write_i32(buf, c.material_count);
     write_i32(buf, c.capsule_offset);
@@ -148,6 +105,11 @@ impl CompoundData {
         pad_to(&mut buf, self.node_offset as usize);
         for node in &self.tree.nodes {
             write_tree_node(&mut buf, node);
+        }
+
+        pad_to(&mut buf, self.proxy_offset as usize);
+        for proxy in &self.tree.proxies {
+            write_tree_proxy(&mut buf, proxy);
         }
 
         pad_to(&mut buf, self.material_offset as usize);

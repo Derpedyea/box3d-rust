@@ -152,14 +152,15 @@ fn serialized_compound() -> Vec<u8> {
 fn compound_blob_section_offsets_validated() {
     let bytes = serialized_compound();
 
-    // nodeOffset (12), then material/capsule/hull/mesh/sphere offsets in the trailing
-    // header block that starts at 16 + DYNAMIC_TREE_SIZE (80) = 96.
-    assert_offsets_validated(&bytes, &[12, 96, 104, 112, 124, 136], |b| {
+    // nodeOffset (12), proxyOffset (16), then material/capsule/hull/mesh/sphere offsets in
+    // the trailing header block that starts at 24 + DYNAMIC_TREE_SIZE (112) = 136.
+    assert_offsets_validated(&bytes, &[12, 16, 136, 144, 152, 164, 176], |b| {
         convert_bytes_to_compound(b).is_some()
     });
 
     // Negative counts must be rejected before they become huge `with_capacity` requests.
-    for offset in [40usize, 100, 108, 116, 128, 140] {
+    // Tree nodeCapacity (24 + 36) and proxyCapacity (24 + 48), then the trailing counts.
+    for offset in [60usize, 72, 140, 148, 156, 168, 180] {
         assert!(
             convert_bytes_to_compound(&with_i32(&bytes, offset, -1)).is_none(),
             "negative count at header byte {offset} was accepted"
@@ -171,17 +172,17 @@ fn read_i32_at(bytes: &[u8], offset: usize) -> i32 {
     i32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
 }
 
-/// Start of the nested hull blob: hullOffset (header byte 112) locates the hull instance
+/// Start of the nested hull blob: hullOffset (header byte 152) locates the hull instance
 /// array, and each instance stores its shared blob's offset at instance byte 28.
 fn nested_hull_start(bytes: &[u8]) -> usize {
-    let instances = read_i32_at(bytes, 112) as usize;
+    let instances = read_i32_at(bytes, 152) as usize;
     read_i32_at(bytes, instances + 28) as usize
 }
 
-/// Start of the nested mesh blob: meshOffset (header byte 124) locates the mesh instance
+/// Start of the nested mesh blob: meshOffset (header byte 164) locates the mesh instance
 /// array, and each instance stores its shared blob's offset at instance byte 40.
 fn nested_mesh_start(bytes: &[u8]) -> usize {
-    let instances = read_i32_at(bytes, 124) as usize;
+    let instances = read_i32_at(bytes, 164) as usize;
     read_i32_at(bytes, instances + 40) as usize
 }
 

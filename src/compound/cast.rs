@@ -21,7 +21,7 @@ use crate::mesh::{overlap_mesh, ray_cast_mesh, shape_cast_mesh};
 /// Compute the AABB of a compound. (b3ComputeCompoundAABB)
 pub fn compute_compound_aabb(shape: &CompoundData, transform: Transform) -> Aabb {
     debug_assert!(shape.node_offset > 0);
-    let aabb = shape.tree.root_bounds();
+    let aabb = shape.tree.nodes[crate::dynamic_tree::ROOT_NODE as usize].aabb;
     aabb_transform(transform, aabb)
 }
 

@@ -4,7 +4,7 @@ use super::{make_material, v};
 use crate::compound::{
     create_compound, destroy_compound, get_compound_capsule, get_compound_hull,
     get_compound_materials, get_compound_sphere, CompoundCapsuleDef, CompoundDef, CompoundHullDef,
-    CompoundMeshDef, CompoundSphereDef, COMPOUND_VERSION,
+    CompoundMeshDef, CompoundSphereDef, COMPOUND_DATA_SIZE, COMPOUND_VERSION,
 };
 use crate::geometry::{default_surface_material, Capsule, Sphere};
 use crate::hull::make_box_hull;
@@ -59,7 +59,7 @@ fn compound_create_mixed() {
     };
     let compound = create_compound(&def).expect("create");
     assert_eq!(compound.version, COMPOUND_VERSION);
-    assert!(compound.byte_count > 144);
+    assert!(compound.byte_count > COMPOUND_DATA_SIZE as i32);
     assert_eq!(compound.capsule_count, 1);
     assert_eq!(compound.hull_count, 1);
     assert_eq!(compound.mesh_count, 1);
@@ -67,8 +67,10 @@ fn compound_create_mixed() {
     assert_eq!(compound.material_count, 1);
     assert_eq!(compound.shared_hull_count, 1);
     assert_eq!(compound.shared_mesh_count, 1);
-    assert!(compound.tree.node_count() > 0);
+    assert!(compound.tree.node_end() >= 2);
+    assert!(compound.tree.proxy_count() > 0);
     assert!(!compound.tree.nodes.is_empty());
+    assert!(!compound.tree.proxies.is_empty());
     destroy_compound(compound);
     destroy_mesh(mesh_data);
 }

@@ -17,7 +17,6 @@ use crate::math_functions::{
     mul_mv, mul_quat, mul_sv, neg, normalize_quat, offset_pos, rotate_vector, solve3, sub,
     transpose, Matrix3, Vec3, QUAT_IDENTITY, VEC3_ZERO,
 };
-use crate::shape::shape_flags;
 use crate::solver_set::AWAKE_SET;
 use crate::types::BodyType;
 use crate::world::World;
@@ -325,18 +324,14 @@ pub(super) fn finalize_bodies(
             }
         }
 
+        // Update shapes AABBs
+        // For fast non-bullet bodies the AABB has already been updated in b3SolveContinuous
+        // For fast bullet bodies the AABB will be updated at a later stage
         let sim_now = world.solver_sets[AWAKE_SET as usize].body_sims[sim_index];
-        let transform = sim_now.transform;
-        let is_fast = (sim_now.flags & body_flags::IS_FAST) != 0;
-        let mut shape_id = world.bodies[body_id as usize].head_shape_id;
-        while shape_id != NULL_INDEX {
-            if is_fast {
-                // Fast non-bullet AABBs already updated in solve_continuous;
-                // fast bullets update later. Always mark enlarged for move buffer.
-                world.task_contexts[0]
-                    .enlarged_sim_bit_set
-                    .set_bit(sim_index as u32);
-            } else {
+        if (sim_now.flags & body_flags::IS_FAST) == 0 {
+            let transform = sim_now.transform;
+            let mut shape_id = world.bodies[body_id as usize].head_shape_id;
+            while shape_id != NULL_INDEX {
                 let aabb = crate::shape::compute_fat_shape_aabb(
                     &world.shapes[shape_id as usize],
                     transform,
@@ -344,8 +339,6 @@ pub(super) fn finalize_bodies(
                 );
                 let shape = &mut world.shapes[shape_id as usize];
                 shape.aabb = aabb;
-
-                debug_assert!((shape.flags & shape_flags::ENLARGED_AABB) == 0);
 
                 if !aabb_contains(shape.fat_aabb, aabb) {
                     let margin = shape.aabb_margin;
@@ -358,15 +351,16 @@ pub(super) fn finalize_bodies(
                         lower_bound: sub(aabb.lower_bound, aabb_margin),
                         upper_bound: add(aabb.upper_bound, aabb_margin),
                     };
-                    shape.flags |= shape_flags::ENLARGED_AABB;
 
-                    world.task_contexts[0]
-                        .enlarged_sim_bit_set
-                        .set_bit(sim_index as u32);
+                    // Mark the hierarchy as moved. (C uses atomic operations here because
+                    // finalize runs on many workers; the port is serial.)
+                    let proxy_key = shape.proxy_key;
+                    let fat_aabb = shape.fat_aabb;
+                    world.broad_phase.mark_proxy_moved(proxy_key, fat_aabb);
                 }
-            }
 
-            shape_id = world.shapes[shape_id as usize].next_shape_id;
+                shape_id = world.shapes[shape_id as usize].next_shape_id;
+            }
         }
     }
 }

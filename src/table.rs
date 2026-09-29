@@ -50,11 +50,16 @@ pub struct HashSet {
     pub(crate) count: u32,
 }
 
-// Murmur hash finalizer truncated to u32. A good mixer matters here because
-// keys are built from pairs of increasing integers, where a simple XOR hash
-// collides heavily.
+// I need a good hash because the keys are built from pairs of increasing integers.
+// A simple hash like hash = (integer1 XOR integer2) has many collisions.
 // https://lemire.me/blog/2018/08/15/fast-strongly-universal-64-bit-hashing-everywhere/
-fn key_hash(key: u64) -> u32 {
+// https://preshing.com/20130107/this-hash-set-is-faster-than-a-judy-array/
+// todo try: https://www.jandrewrogers.com/2019/02/12/fast-perfect-hashing/
+// todo try:
+// https://probablydance.com/2018/06/16/fibonacci-hashing-the-optimization-that-the-world-forgot-or-a-better-alternative-to-integer-modulo/
+/// Murmur hash finalizer truncated to u32. (table.h: b3KeyHash)
+#[inline]
+pub fn key_hash(key: u64) -> u32 {
     let mut h = key;
     h ^= h >> 33;
     h = h.wrapping_mul(0xff51afd7ed558ccd);
@@ -155,6 +160,15 @@ impl HashSet {
         // key of zero is a sentinel
         debug_assert!(key != 0);
         let hash = key_hash(key);
+        let index = self.find_slot(key, hash);
+        self.items[index].key == key
+    }
+
+    /// True if `key` is present. The caller already has the hash, which lets a batch
+    /// prefetch the slots before probing them. (b3ContainsHashedKey)
+    pub fn contains_hashed_key(&self, key: u64, hash: u32) -> bool {
+        debug_assert!(key != 0);
+        debug_assert!(hash == key_hash(key));
         let index = self.find_slot(key, hash);
         self.items[index].key == key
     }

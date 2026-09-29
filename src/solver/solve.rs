@@ -25,8 +25,7 @@ use crate::events::{BodyMoveEvent, JointEvent};
 use crate::id::{BodyId, JointId};
 use crate::island::split_island;
 use crate::joint::{get_joint_reaction, prepare_joint, solve_joint, warm_start_joint};
-use crate::math_functions::WORLD_TRANSFORM_IDENTITY;
-use crate::shape::shape_flags;
+use crate::math_functions::{aabb_contains, WORLD_TRANSFORM_IDENTITY};
 use crate::solver_set::{try_sleep_island, AWAKE_SET};
 use crate::types::BodyType;
 use crate::world::World;
@@ -296,15 +295,18 @@ pub fn solve(world: &mut World, context: &StepContext) {
         let task_context = &mut world.task_contexts[0];
         task_context.sensor_hits.clear();
         task_context
-            .enlarged_sim_bit_set
-            .set_bit_count_and_clear(awake_body_count as u32);
-        task_context
             .awake_island_bit_set
             .set_bit_count_and_clear(awake_island_count as u32);
         task_context.split_island_id = NULL_INDEX;
         task_context.split_sleep_time = 0.0;
     }
 
+    // Finish the user tree task that was queued earlier in the time step. This must be
+    // complete before touching the broad-phase. The serial port already ran the tree task
+    // inline in update_broad_phase_pairs, so only the validation remains.
+    world.broad_phase.validate_no_moved();
+
+    // Finalize bodies. Must happen after the constraint solver and after island splitting.
     finalize_bodies(world, context, &mut bullet_bodies);
 
     // Report joint events (C block between finalize and hit events).
@@ -433,83 +435,49 @@ pub fn solve(world: &mut World, context: &StepContext) {
         }
     }
 
-    // Enlarge broad-phase proxies for shapes whose fat AABB grew.
-    // Fast bullets only buffer moves here — final AABB comes from the bullet pass.
+    // Refit BVH
     {
-        world.broad_phase.validate_no_enlarged();
-
-        let word_count = world.task_contexts[0].enlarged_sim_bit_set.block_count();
-        for k in 0..word_count {
-            let mut word = world.task_contexts[0].enlarged_sim_bit_set.block(k);
-            while word != 0 {
-                let ctz = word.trailing_zeros();
-                let body_sim_index = (64 * k + ctz) as usize;
-
-                let body_sim = world.solver_sets[AWAKE_SET as usize].body_sims[body_sim_index];
-                let body_id = body_sim.body_id;
-                let mut shape_id = world.bodies[body_id as usize].head_shape_id;
-
-                if (body_sim.flags & (body_flags::IS_BULLET | body_flags::IS_FAST))
-                    == (body_flags::IS_BULLET | body_flags::IS_FAST)
-                {
-                    while shape_id != NULL_INDEX {
-                        let proxy_key = world.shapes[shape_id as usize].proxy_key;
-                        world.broad_phase.buffer_move(proxy_key);
-                        shape_id = world.shapes[shape_id as usize].next_shape_id;
-                    }
-                } else {
-                    while shape_id != NULL_INDEX {
-                        if (world.shapes[shape_id as usize].flags & shape_flags::ENLARGED_AABB) != 0
-                        {
-                            let proxy_key = world.shapes[shape_id as usize].proxy_key;
-                            let fat_aabb = world.shapes[shape_id as usize].fat_aabb;
-                            world.broad_phase.enlarge_proxy(proxy_key, fat_aabb);
-                            world.shapes[shape_id as usize].flags &= !shape_flags::ENLARGED_AABB;
-                        }
-                        shape_id = world.shapes[shape_id as usize].next_shape_id;
-                    }
-                }
-
-                word &= word - 1;
-            }
-        }
+        world.broad_phase.trees[BodyType::Kinematic as usize].refit();
+        world.broad_phase.trees[BodyType::Dynamic as usize].refit();
 
         world.broad_phase.validate();
     }
 
-    // Bullet continuous pass, then serial enlarge of bullet proxies.
+    // Fast bullet bodies. Note: a bullet body may be moving slow
     if !bullet_bodies.is_empty() {
         for &sim_index in &bullet_bodies {
             solve_continuous(world, sim_index);
         }
 
+        // Serially enlarge broad-phase proxies for bullet shapes
         let dynamic_tree = BodyType::Dynamic as usize;
+
+        // This loop has non-deterministic order but it shouldn't affect the result
         for &sim_index in &bullet_bodies {
             let bullet_sim =
                 &mut world.solver_sets[AWAKE_SET as usize].body_sims[sim_index as usize];
             if (bullet_sim.flags & body_flags::ENLARGE_BOUNDS) == 0 {
                 continue;
             }
+
+            // Clear flag
             bullet_sim.flags &= !body_flags::ENLARGE_BOUNDS;
+
             let body_id = bullet_sim.body_id;
+            debug_assert!(0 <= body_id && (body_id as usize) < world.bodies.len());
 
             let mut shape_id = world.bodies[body_id as usize].head_shape_id;
             while shape_id != NULL_INDEX {
-                if (world.shapes[shape_id as usize].flags & shape_flags::ENLARGED_AABB) == 0 {
-                    shape_id = world.shapes[shape_id as usize].next_shape_id;
-                    continue;
-                }
-                world.shapes[shape_id as usize].flags &= !shape_flags::ENLARGED_AABB;
-
                 let proxy_key = world.shapes[shape_id as usize].proxy_key;
                 let proxy_id_ = proxy_id(proxy_key);
                 debug_assert!(proxy_type(proxy_key) == BodyType::Dynamic);
-                debug_assert!(
-                    world.broad_phase.moved_proxies[dynamic_tree].get_bit(proxy_id_ as u32)
-                );
 
+                let tree_aabb = world.broad_phase.trees[dynamic_tree].aabb(proxy_id_);
                 let fat_aabb = world.shapes[shape_id as usize].fat_aabb;
-                world.broad_phase.trees[dynamic_tree].enlarge_proxy(proxy_id_, fat_aabb);
+
+                if !aabb_contains(tree_aabb, fat_aabb) {
+                    world.broad_phase.trees[dynamic_tree].enlarge_proxy(proxy_id_, fat_aabb);
+                }
 
                 shape_id = world.shapes[shape_id as usize].next_shape_id;
             }

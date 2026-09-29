@@ -38,11 +38,10 @@ fn serialize_tree(tree: &DynamicTree) -> Vec<u8> {
     let mut leaves: Vec<SavedLeaf> = tree
         .node_views()
         .iter()
-        .enumerate()
-        .filter(|(_, n)| n.is_allocated && n.is_leaf)
-        .map(|(i, n)| SavedLeaf {
+        .filter(|n| !n.is_empty && n.is_leaf)
+        .map(|n| SavedLeaf {
             user_data: n.user_data,
-            category_bits: tree.category_bits(i as i32),
+            category_bits: tree.category_bits(n.proxy_id),
             aabb: n.aabb,
         })
         .collect();
@@ -222,7 +221,7 @@ mod tests {
         let mut v: Vec<(u64, [f32; 6])> = tree
             .node_views()
             .iter()
-            .filter(|n| n.is_allocated && n.is_leaf)
+            .filter(|n| !n.is_empty && n.is_leaf)
             .map(|n| {
                 (
                     n.user_data,

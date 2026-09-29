@@ -1,20 +1,16 @@
-// Tree rebuild with the median-split heuristic from dynamic_tree.c.
-// The SAH heuristic (B3_TREE_HEURISTIC == 1) is compiled out upstream and is
-// not ported.
+// Tree rebuild with the median-split heuristic from dynamic_tree.c. The rebuild puts the
+// whole tree in DFS order and retains unmoved subtrees. The SAH heuristic
+// (B3_TREE_HEURISTIC == 1) is compiled out upstream and is not ported.
+//
 // SPDX-FileCopyrightText: 2025 Erin Catto
 // SPDX-License-Identifier: MIT
 
-use super::{DynamicTree, ENLARGED_NODE, TREE_STACK_SIZE};
+use super::insert::make_internal_node;
+use super::{
+    make_empty_node, DynamicTree, TreeNode, MOVED_NODE, NODE_INDEX_MASK, ROOT_NODE, TREE_STACK_SIZE,
+};
 use crate::core::NULL_INDEX;
-use crate::math_functions::{aabb_center, aabb_union, add, max, min, mul_sv, sub, Vec3};
-
-fn max_u16(a: u16, b: u16) -> u16 {
-    if a > b {
-        a
-    } else {
-        b
-    }
-}
+use crate::math_functions::{aabb_center, add, max, min, mul_sv, sub, Vec3};
 
 /// Median split heuristic. (static b3PartitionMid)
 fn partition_mid(indices: &mut [i32], centers: &mut [Vec3]) -> i32 {
@@ -53,6 +49,7 @@ fn partition_mid(indices: &mut [i32], centers: &mut [Vec3]) -> i32 {
             }
 
             if i1 < i2 {
+                // Swap indices and centers
                 indices.swap(i1, i2 - 1);
                 centers.swap(i1, i2 - 1);
 
@@ -110,211 +107,296 @@ fn partition_mid(indices: &mut [i32], centers: &mut [Vec3]) -> i32 {
     }
 }
 
-/// Temporary data used to track the rebuild of a tree node.
-/// (struct b3RebuildItem)
+/// Temporary data used to track the rebuild of a tree node. (struct b3RebuildItem)
 #[derive(Clone, Copy, Default)]
 struct RebuildItem {
+    // Where this node is written and the pair its children go in.
     node_index: i32,
+    pair: i32,
     child_count: i32,
+
     // Leaf indices
     start_index: i32,
     split_index: i32,
     end_index: i32,
 }
 
+/// (struct b3CopyItem)
+#[derive(Clone, Copy, Default)]
+struct CopyItem {
+    old_pair: i32,
+    new_index: i32,
+}
+
+/// (static b3SetLeftChild)
+#[inline]
+fn set_left_child(node: &mut TreeNode, pair: i32) {
+    node.flag_index = (node.flag_index & !NODE_INDEX_MASK) | pair as u32;
+}
+
 impl DynamicTree {
-    /// Returns the root node index. (static b3BuildTree)
-    fn build_tree(&mut self, leaf_count: i32) -> i32 {
-        if leaf_count == 1 {
-            let leaf = self.leaf_indices[0];
-            self.nodes[leaf as usize].parent = NULL_INDEX;
-            return leaf;
+    /// Bump allocate a pair of sibling nodes. Returns index to the first one.
+    /// (static b3BumpPair)
+    #[inline]
+    fn bump_pair(&mut self, parent: i32) -> i32 {
+        let pair = self.node_end;
+        debug_assert!(pair + 2 <= self.node_capacity());
+        self.node_end += 2;
+        self.parents[pair as usize] = parent;
+        self.parents[pair as usize + 1] = parent;
+        pair
+    }
+
+    /// Copy a retained subtree from the old array into the rebuilt DFS array using a bump
+    /// allocator. (static b3CopySubtree)
+    fn copy_subtree(&mut self, mut node: TreeNode, new_index: i32) {
+        if node.is_leaf() {
+            self.swap_nodes[new_index as usize] = node;
+            self.proxies[node.proxy_id() as usize].node = new_index;
+            return;
         }
 
-        let mut stack = vec![RebuildItem::default(); TREE_STACK_SIZE];
+        let mut stack = [CopyItem::default(); TREE_STACK_SIZE];
+        let mut stack_count = 0usize;
+
+        let mut old_pair = node.left_child();
+        let mut new_pair = self.bump_pair(new_index);
+        set_left_child(&mut node, new_pair);
+
+        // Copy the subtree root. This can be a left or right sibling (even or odd).
+        self.swap_nodes[new_index as usize] = node;
+
+        loop {
+            let np = new_pair as usize;
+
+            // Copy the siblings.
+            self.swap_nodes[np] = self.nodes[old_pair as usize];
+            self.swap_nodes[np + 1] = self.nodes[old_pair as usize + 1];
+
+            let right = self.swap_nodes[np + 1];
+            if right.is_leaf() {
+                // Hook up proxy on right sibling.
+                let proxy_id = right.proxy_id();
+                self.proxies[proxy_id as usize].node = new_pair + 1;
+            } else if stack_count < TREE_STACK_SIZE {
+                // Push the left child of the right sibling.
+                let left_child = right.left_child();
+                stack[stack_count] = CopyItem {
+                    old_pair: left_child,
+                    new_index: new_pair + 1,
+                };
+                stack_count += 1;
+            } else {
+                // todo fail gracefully if the stack runs out in release
+                debug_assert!(stack_count < TREE_STACK_SIZE);
+            }
+
+            let left = self.swap_nodes[np];
+            if !left.is_leaf() {
+                // Descend into left subtree.
+                let left_index = new_pair;
+                old_pair = left.left_child();
+                new_pair = self.bump_pair(left_index);
+                set_left_child(&mut self.swap_nodes[left_index as usize], new_pair);
+                continue;
+            }
+
+            // Hook up proxy on left sibling.
+            self.proxies[left.proxy_id() as usize].node = new_pair;
+
+            if stack_count == 0 {
+                break;
+            }
+
+            // Descend a right subtree that was previously pushed.
+            stack_count -= 1;
+            let item = stack[stack_count];
+            old_pair = item.old_pair;
+            new_pair = self.bump_pair(item.new_index);
+            set_left_child(&mut self.swap_nodes[item.new_index as usize], new_pair);
+        }
+    }
+
+    /// (static b3PlaceLeaf)
+    fn place_leaf(&mut self, leaf: TreeNode, new_index: i32) {
+        if leaf.is_leaf() {
+            self.swap_nodes[new_index as usize] = leaf;
+            self.proxies[leaf.proxy_id() as usize].node = new_index;
+        } else {
+            self.copy_subtree(leaf, new_index);
+        }
+    }
+
+    /// (static b3BuildTree)
+    fn build_tree(&mut self, leaf_count: i32) {
+        // Bump allocation into the swap nodes.
+        self.node_end = 2;
+        self.swap_nodes[ROOT_NODE as usize + 1] = make_empty_node();
+        self.parents[ROOT_NODE as usize] = NULL_INDEX;
+        self.parents[ROOT_NODE as usize + 1] = NULL_INDEX;
+
+        if leaf_count == 1 {
+            let leaf = self.leaf_nodes[self.leaf_indices[0] as usize];
+            self.place_leaf(leaf, ROOT_NODE);
+            return;
+        }
+
+        let mut stack = [RebuildItem::default(); TREE_STACK_SIZE];
         let mut top = 0usize;
 
-        stack[0].node_index = self.allocate_node();
+        stack[0].node_index = ROOT_NODE;
+        stack[0].pair = self.bump_pair(ROOT_NODE);
         stack[0].child_count = -1;
         stack[0].start_index = 0;
         stack[0].end_index = leaf_count;
-        stack[0].split_index = {
-            // Split borrows: partition operates on the rebuild scratch arrays.
-            let (indices, centers) = (&mut self.leaf_indices, &mut self.leaf_centers);
-            partition_mid(
-                &mut indices[..leaf_count as usize],
-                &mut centers[..leaf_count as usize],
-            )
-        };
+        stack[0].split_index = partition_mid(
+            &mut self.leaf_indices[..leaf_count as usize],
+            &mut self.leaf_centers[..leaf_count as usize],
+        );
 
         loop {
-            stack[top].child_count += 1;
-            let item = stack[top];
+            let item = &mut stack[top];
+            item.child_count += 1;
 
             if item.child_count == 2 {
-                // This internal node has both children established
-
+                // Both children written, so the parent node can be finalized.
+                let item = *item;
+                self.swap_nodes[item.node_index as usize] =
+                    make_internal_node(&self.swap_nodes, item.pair);
                 if top == 0 {
-                    // all done
                     break;
                 }
 
-                let parent_item = stack[top - 1];
-
-                if parent_item.child_count == 0 {
-                    debug_assert!(self.nodes[parent_item.node_index as usize].child1 == NULL_INDEX);
-                    self.nodes[parent_item.node_index as usize].child1 = item.node_index;
-                } else {
-                    debug_assert!(parent_item.child_count == 1);
-                    debug_assert!(self.nodes[parent_item.node_index as usize].child2 == NULL_INDEX);
-                    self.nodes[parent_item.node_index as usize].child2 = item.node_index;
-                }
-
-                let node_index = item.node_index as usize;
-                debug_assert!(self.nodes[node_index].parent == NULL_INDEX);
-                self.nodes[node_index].parent = parent_item.node_index;
-
-                debug_assert!(self.nodes[node_index].child1 != NULL_INDEX);
-                debug_assert!(self.nodes[node_index].child2 != NULL_INDEX);
-                let c1 = self.nodes[node_index].child1 as usize;
-                let c2 = self.nodes[node_index].child2 as usize;
-
-                self.nodes[node_index].aabb = aabb_union(self.nodes[c1].aabb, self.nodes[c2].aabb);
-                self.nodes[node_index].height =
-                    1 + max_u16(self.nodes[c1].height, self.nodes[c2].height);
-                self.nodes[node_index].category_bits =
-                    self.nodes[c1].category_bits | self.nodes[c2].category_bits;
-
-                // Pop stack
                 top -= 1;
-            } else {
-                let (start_index, end_index) = if item.child_count == 0 {
-                    (item.start_index, item.split_index)
-                } else {
-                    debug_assert!(item.child_count == 1);
-                    (item.split_index, item.end_index)
-                };
-
-                let count = end_index - start_index;
-
-                if count == 1 {
-                    let child_index = self.leaf_indices[start_index as usize];
-                    let node_index = item.node_index as usize;
-
-                    if item.child_count == 0 {
-                        debug_assert!(self.nodes[node_index].child1 == NULL_INDEX);
-                        self.nodes[node_index].child1 = child_index;
-                    } else {
-                        debug_assert!(item.child_count == 1);
-                        debug_assert!(self.nodes[node_index].child2 == NULL_INDEX);
-                        self.nodes[node_index].child2 = child_index;
-                    }
-
-                    debug_assert!(self.nodes[child_index as usize].parent == NULL_INDEX);
-                    self.nodes[child_index as usize].parent = item.node_index;
-                } else {
-                    debug_assert!(count > 0);
-                    debug_assert!(top < TREE_STACK_SIZE);
-
-                    top += 1;
-                    let node_index = self.allocate_node();
-                    let split_index = {
-                        let (s, e) = (start_index as usize, end_index as usize);
-                        let (indices, centers) = (&mut self.leaf_indices, &mut self.leaf_centers);
-                        partition_mid(&mut indices[s..e], &mut centers[s..e])
-                    };
-                    let new_item = &mut stack[top];
-                    new_item.node_index = node_index;
-                    new_item.child_count = -1;
-                    new_item.start_index = start_index;
-                    new_item.end_index = end_index;
-                    new_item.split_index = split_index + start_index;
-                }
+                continue;
             }
+
+            let item = *item;
+            let slot = item.child_count;
+            let start_index = if slot == 0 {
+                item.start_index
+            } else {
+                item.split_index
+            };
+            let end_index = if slot == 0 {
+                item.split_index
+            } else {
+                item.end_index
+            };
+            let count = end_index - start_index;
+            debug_assert!(count > 0);
+
+            let node_index = item.pair + slot;
+            if count == 1 {
+                let leaf = self.leaf_nodes[self.leaf_indices[start_index as usize] as usize];
+                self.place_leaf(leaf, node_index);
+                continue;
+            }
+
+            // todo fail gracefully if the stack runs out in release
+            debug_assert!(top < TREE_STACK_SIZE - 1);
+
+            top += 1;
+            let pair = self.bump_pair(node_index);
+            let range = start_index as usize..end_index as usize;
+            let split = partition_mid(
+                &mut self.leaf_indices[range.clone()],
+                &mut self.leaf_centers[range],
+            );
+            stack[top] = RebuildItem {
+                node_index,
+                pair,
+                child_count: -1,
+                start_index,
+                split_index: start_index + split,
+                end_index,
+            };
         }
-
-        let root_index = stack[0].node_index as usize;
-        debug_assert!(self.nodes[root_index].parent == NULL_INDEX);
-        debug_assert!(self.nodes[root_index].child1 != NULL_INDEX);
-        debug_assert!(self.nodes[root_index].child2 != NULL_INDEX);
-
-        let c1 = self.nodes[root_index].child1 as usize;
-        let c2 = self.nodes[root_index].child2 as usize;
-
-        self.nodes[root_index].aabb = aabb_union(self.nodes[c1].aabb, self.nodes[c2].aabb);
-        self.nodes[root_index].height = 1 + max_u16(self.nodes[c1].height, self.nodes[c2].height);
-        self.nodes[root_index].category_bits =
-            self.nodes[c1].category_bits | self.nodes[c2].category_bits;
-
-        stack[0].node_index
     }
 
-    /// Rebuild the tree while retaining subtrees that haven't changed.
-    /// Returns the number of boxes sorted. (b3DynamicTree_Rebuild)
+    /// Rebuild the stale parts of the tree. The entire tree is put into DFS order. This
+    /// makes refitting much faster. This is done async with threading, so the cost is
+    /// hidden. Not safe to access tree during this operation. Returns the number of build
+    /// leaves. (b3DynamicTree_Rebuild)
     pub fn rebuild(&mut self, full_build: bool) -> i32 {
         let proxy_count = self.proxy_count;
         if proxy_count == 0 {
             return 0;
         }
 
-        // Ensure capacity for rebuild space
+        // An unordered tree is rebuilt even when nothing moved, the sweep refit needs the
+        // order
+        let root = self.nodes[ROOT_NODE as usize];
+        if !full_build && !root.is_moved() && self.dfs_ordered {
+            return 0;
+        }
+
+        if self.swap_nodes.is_empty() {
+            self.swap_nodes = vec![TreeNode::zeroed(); self.nodes.len()];
+        }
+
         if proxy_count > self.rebuild_capacity {
             let new_capacity = proxy_count + proxy_count / 2;
 
+            // b3Alloc leaves the storage uninitialized; every slot is written before it
+            // is read.
             self.leaf_indices = vec![0; new_capacity as usize];
+            self.leaf_nodes = vec![TreeNode::zeroed(); new_capacity as usize];
             self.leaf_centers = vec![Vec3::default(); new_capacity as usize];
             self.rebuild_capacity = new_capacity;
         }
 
+        // Gather build leaves. A marked internal node is descended and abandoned in the old
+        // array. Everything else is a build leaf, kept subtrees included. A leaf root, or an
+        // unmarked root on an unordered array, is the one build leaf.
         let mut leaf_count = 0usize;
         let mut stack = [0i32; TREE_STACK_SIZE];
         let mut stack_count = 0usize;
-
-        let mut node_index = self.root;
-
-        // Gather all proxy nodes that have grown and all internal nodes that
-        // haven't grown. Both are considered leaves in the tree rebuild.
-        // Free all internal nodes that have grown.
-        loop {
-            let node = self.nodes[node_index as usize];
-            if node.is_leaf() || (node.flags & ENLARGED_NODE == 0 && !full_build) {
-                self.leaf_indices[leaf_count] = node_index;
-                self.leaf_centers[leaf_count] = aabb_center(node.aabb);
-                leaf_count += 1;
-
-                // Detach
-                self.nodes[node_index as usize].parent = NULL_INDEX;
-            } else {
-                let doomed_node_index = node_index;
-
-                // Handle children
-                node_index = node.child1;
-
-                debug_assert!(stack_count < TREE_STACK_SIZE);
-                if stack_count < TREE_STACK_SIZE {
-                    stack[stack_count] = node.child2;
-                    stack_count += 1;
-                }
-
-                // Remove doomed node
-                self.free_node(doomed_node_index);
-
-                continue;
-            }
-
-            if stack_count == 0 {
-                break;
-            }
-
-            stack_count -= 1;
-            node_index = stack[stack_count];
+        if !root.is_leaf() && (full_build || root.is_moved()) {
+            stack[stack_count] = root.left_child();
+            stack_count += 1;
+        } else {
+            let mut node = root;
+            node.flag_index &= !MOVED_NODE;
+            self.leaf_indices[0] = 0;
+            self.leaf_nodes[0] = node;
+            self.leaf_centers[0] = aabb_center(node.aabb);
+            leaf_count = 1;
         }
 
-        debug_assert!(leaf_count <= proxy_count as usize);
+        while stack_count > 0 {
+            stack_count -= 1;
+            let pair = stack[stack_count];
+            for i in 0..2 {
+                let mut node = self.nodes[pair as usize + i];
+                if !node.is_leaf() && (full_build || node.is_moved()) {
+                    // todo fail gracefully if the stack runs out in release
+                    debug_assert!(stack_count < TREE_STACK_SIZE);
+                    stack[stack_count] = node.left_child();
+                    stack_count += 1;
+                    continue;
+                }
 
-        self.root = self.build_tree(leaf_count as i32);
+                node.flag_index &= !MOVED_NODE;
+                self.leaf_indices[leaf_count] = leaf_count as i32;
+                self.leaf_nodes[leaf_count] = node;
+                self.leaf_centers[leaf_count] = aabb_center(node.aabb);
+                leaf_count += 1;
+            }
+        }
+
+        debug_assert!(0 < leaf_count && leaf_count as i32 <= proxy_count);
+
+        self.build_tree(leaf_count as i32);
+
+        // The spare is now the tree and the old array is the spare. The build is dense, so
+        // the stale tail of the old array sits above the end and is never read.
+        core::mem::swap(&mut self.nodes, &mut self.swap_nodes);
+        self.pair_free_list = NULL_INDEX;
+        self.dfs_ordered = true;
 
         self.validate();
+        self.validate_no_moved();
 
         leaf_count as i32
     }

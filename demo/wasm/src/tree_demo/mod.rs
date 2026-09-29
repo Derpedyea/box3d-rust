@@ -44,8 +44,7 @@
 #![allow(clippy::unnecessary_cast)]
 
 use crate::rng::XorShift32;
-use box3d_rust::core::NULL_INDEX;
-use box3d_rust::dynamic_tree::{DynamicTree, DEFAULT_MASK_BITS};
+use box3d_rust::dynamic_tree::{DynamicTree, DEFAULT_MASK_BITS, ROOT_NODE};
 use box3d_rust::geometry::RayCastInput;
 use box3d_rust::math_functions::{
     aabb_extents, add, closest_point_to_aabb, distance_squared, max, max_int, min, mul_sv, sub,
@@ -128,33 +127,42 @@ fn with_state<R>(f: impl FnOnce(&mut TreeState) -> R) -> R {
 
 /// Breadth-first depth walk (C `TreeBenchmark::ComputeDepths`): assign each node its
 /// depth from the root and return the maximum depth (the tree "height" readout).
+/// The tree is walked a sibling pair at a time, so depth is tracked alongside each
+/// queued pair rather than looked up through the parent index.
 fn compute_depths(tree: &DynamicTree) -> (Vec<i32>, i32) {
     let nodes = tree.node_views();
     let mut depths = vec![0i32; nodes.len()];
-    let root = tree.root_index();
-    if root == NULL_INDEX || nodes.is_empty() {
+    if nodes.is_empty() || tree.proxy_count() == 0 {
         return (depths, 0);
     }
 
-    // C uses a plain FIFO sized nodeCount; a Vec queue is behaviorally identical.
-    let mut queue: Vec<i32> = Vec::with_capacity(nodes.len());
-    queue.push(root);
+    depths[ROOT_NODE as usize] = 0;
+
+    let root = nodes[ROOT_NODE as usize];
+    if root.is_leaf {
+        return (depths, 0);
+    }
+
+    // C uses a plain FIFO of `{ pair, depth }` sized nodeEnd; a Vec queue is behaviorally
+    // identical.
+    let mut queue: Vec<(i32, i32)> = Vec::with_capacity(nodes.len());
+    queue.push((root.left_child, 1));
     let mut front = 0usize;
     let mut depth = 0;
 
     while front < queue.len() {
-        let index = queue[front];
+        let (pair, item_depth) = queue[front];
         front += 1;
-        let node = nodes[index as usize];
-        if node.parent == NULL_INDEX {
-            depths[index as usize] = 0;
-        } else {
-            depths[index as usize] = depths[node.parent as usize] + 1;
-            depth = max_int(depth, depths[index as usize]);
-        }
-        if !node.is_leaf {
-            queue.push(node.child1);
-            queue.push(node.child2);
+        depth = max_int(depth, item_depth);
+
+        for i in 0..2 {
+            let index = (pair + i) as usize;
+            let node = nodes[index];
+            depths[index] = item_depth;
+
+            if !node.is_leaf {
+                queue.push((node.left_child, item_depth + 1));
+            }
         }
     }
 
@@ -341,7 +349,9 @@ pub fn tree_leaf_boxes() -> Vec<f32> {
         let nodes = state.tree.node_views();
         let mut out = Vec::new();
         for node in &nodes {
-            if !(node.is_allocated && node.is_leaf) {
+            // Live leaves only. A mark on a leaf says its ancestors still need a refit, the
+            // leaf box itself is already current, so moved leaves still draw.
+            if node.is_empty || !node.is_leaf {
                 continue;
             }
             let proxy = &state.proxies[node.user_data as usize];
@@ -370,7 +380,7 @@ pub fn tree_level_boxes(level: i32) -> Vec<f32> {
         let nodes = state.tree.node_views();
         let mut out = Vec::new();
         for (i, node) in nodes.iter().enumerate() {
-            if state.depths[i] != level || !node.is_allocated {
+            if state.depths[i] != level || node.is_empty {
                 continue;
             }
             out.extend_from_slice(&[

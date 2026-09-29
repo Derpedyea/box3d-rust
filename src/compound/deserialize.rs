@@ -14,14 +14,16 @@
 
 use super::types::{
     CompoundCapsule, CompoundData, CompoundSphere, HullInstance, MeshInstance,
-    COMPOUND_CONVEX_SIZE, COMPOUND_DATA_SIZE, COMPOUND_VERSION, DYNAMIC_TREE_SIZE,
-    HULL_INSTANCE_SIZE, MAX_COMPOUND_MESH_MATERIALS, MESH_INSTANCE_SIZE, TREE_NODE_SIZE,
+    COMPOUND_CONVEX_SIZE, COMPOUND_DATA_SIZE, COMPOUND_TREE_OFFSET, COMPOUND_VERSION,
+    HULL_INSTANCE_SIZE, MAX_COMPOUND_MESH_MATERIALS, MESH_INSTANCE_SIZE,
 };
-use crate::core::NULL_INDEX;
-use crate::dynamic_tree::{DynamicTree, TreeNode, ALLOCATED_NODE, DYNAMIC_TREE_VERSION, LEAF_NODE};
+use crate::dynamic_tree::{
+    read_tree_header, read_tree_node, read_tree_proxy, DynamicTree, DYNAMIC_TREE_SIZE,
+    TREE_NODE_SIZE, TREE_PROXY_SIZE,
+};
 use crate::geometry::{SurfaceMaterial, SURFACE_MATERIAL_SIZE};
 use crate::hull::{convert_bytes_to_hull, HULL_BYTE_COUNT_OFFSET, HULL_DATA_SIZE};
-use crate::math_functions::{Aabb, Quat, Transform, Vec3};
+use crate::math_functions::{Quat, Transform, Vec3};
 use crate::mesh::{convert_bytes_to_mesh, MESH_BYTE_COUNT_OFFSET, MESH_DATA_SIZE};
 
 fn read_u64(buf: &[u8], o: usize) -> u64 {
@@ -53,47 +55,6 @@ fn read_transform(buf: &[u8], o: usize) -> Transform {
     Transform {
         p: read_vec3(buf, o),
         q: read_quat(buf, o + 12),
-    }
-}
-fn read_aabb(buf: &[u8], o: usize) -> Aabb {
-    Aabb {
-        lower_bound: read_vec3(buf, o),
-        upper_bound: read_vec3(buf, o + 12),
-    }
-}
-
-fn read_tree_node(buf: &[u8], o: usize) -> TreeNode {
-    let aabb = read_aabb(buf, o);
-    let category_bits = read_u64(buf, o + 24);
-    let union8 = read_u64(buf, o + 32);
-    let parent_or_next = read_i32(buf, o + 40);
-    let height = u16::from_le_bytes(buf[o + 44..o + 46].try_into().unwrap());
-    let flags = u16::from_le_bytes(buf[o + 46..o + 48].try_into().unwrap());
-
-    let (child1, child2, user_data) = if flags & LEAF_NODE != 0 {
-        (NULL_INDEX, NULL_INDEX, union8)
-    } else {
-        let c1 = read_i32(buf, o + 32);
-        let c2 = read_i32(buf, o + 36);
-        (c1, c2, 0)
-    };
-
-    let (parent, next) = if flags & ALLOCATED_NODE != 0 {
-        (parent_or_next, NULL_INDEX)
-    } else {
-        (NULL_INDEX, parent_or_next)
-    };
-
-    TreeNode {
-        aabb,
-        category_bits,
-        child1,
-        child2,
-        user_data,
-        parent,
-        next,
-        height,
-        flags,
     }
 }
 
@@ -165,32 +126,32 @@ pub fn convert_bytes_to_compound(bytes: &[u8]) -> Option<CompoundData> {
     }
 
     let node_offset = read_i32(bytes, 12);
-    if node_offset <= 0 {
+    let proxy_offset = read_i32(bytes, 16);
+    if node_offset <= 0 || proxy_offset <= 0 {
         return None;
     }
 
-    // Tree header starts at offset 16
-    let tree_version = read_u64(bytes, 16);
-    let root = read_i32(bytes, 16 + 16);
-    let node_count = read_i32(bytes, 16 + 20);
-    let node_capacity = read_i32(bytes, 16 + 24);
-    let proxy_count = read_i32(bytes, 16 + 28);
-    let free_list = read_i32(bytes, 16 + 32);
-    let rebuild_capacity = read_i32(bytes, 16 + 72);
+    // The embedded b3DynamicTree header starts at offset 24
+    let header = read_tree_header(bytes, COMPOUND_TREE_OFFSET);
 
-    let material_offset = read_i32(bytes, 16 + DYNAMIC_TREE_SIZE);
-    let material_count = read_i32(bytes, 16 + DYNAMIC_TREE_SIZE + 4);
-    let capsule_offset = read_i32(bytes, 16 + DYNAMIC_TREE_SIZE + 8);
-    let capsule_count = read_i32(bytes, 16 + DYNAMIC_TREE_SIZE + 12);
-    let hull_offset = read_i32(bytes, 16 + DYNAMIC_TREE_SIZE + 16);
-    let hull_count = read_i32(bytes, 16 + DYNAMIC_TREE_SIZE + 20);
-    let shared_hull_count = read_i32(bytes, 16 + DYNAMIC_TREE_SIZE + 24);
-    let mesh_offset = read_i32(bytes, 16 + DYNAMIC_TREE_SIZE + 28);
-    let mesh_count = read_i32(bytes, 16 + DYNAMIC_TREE_SIZE + 32);
-    let shared_mesh_count = read_i32(bytes, 16 + DYNAMIC_TREE_SIZE + 36);
-    let sphere_offset = read_i32(bytes, 16 + DYNAMIC_TREE_SIZE + 40);
-    let sphere_count = read_i32(bytes, 16 + DYNAMIC_TREE_SIZE + 44);
+    let trailing = COMPOUND_TREE_OFFSET + DYNAMIC_TREE_SIZE;
+    let material_offset = read_i32(bytes, trailing);
+    let material_count = read_i32(bytes, trailing + 4);
+    let capsule_offset = read_i32(bytes, trailing + 8);
+    let capsule_count = read_i32(bytes, trailing + 12);
+    let hull_offset = read_i32(bytes, trailing + 16);
+    let hull_count = read_i32(bytes, trailing + 20);
+    let shared_hull_count = read_i32(bytes, trailing + 24);
+    let mesh_offset = read_i32(bytes, trailing + 28);
+    let mesh_count = read_i32(bytes, trailing + 32);
+    let shared_mesh_count = read_i32(bytes, trailing + 36);
+    let sphere_offset = read_i32(bytes, trailing + 40);
+    let sphere_count = read_i32(bytes, trailing + 44);
 
+    // The baked tree carries its live node range (nodeCapacity == nodeEnd) and its proxies
+    // (proxyCapacity == proxyCount). C fixes up the node and proxy pointers from the
+    // offsets; the port reads the arrays out of the blob.
+    let node_capacity = header.node_capacity;
     let noff = section_offset(node_offset, node_capacity, TREE_NODE_SIZE, bytes.len())?;
     let mut nodes = Vec::with_capacity(node_capacity as usize);
     for i in 0..node_capacity as usize {
@@ -198,18 +159,31 @@ pub fn convert_bytes_to_compound(bytes: &[u8]) -> Option<CompoundData> {
         nodes.push(read_tree_node(bytes, o));
     }
 
-    let mut tree = DynamicTree::new(0);
-    tree.version = if tree_version != 0 {
-        tree_version
-    } else {
-        DYNAMIC_TREE_VERSION
-    };
+    let proxy_capacity = header.proxy_capacity;
+    let poff = section_offset(proxy_offset, proxy_capacity, TREE_PROXY_SIZE, bytes.len())?;
+    let mut proxies = Vec::with_capacity(proxy_capacity as usize);
+    for i in 0..proxy_capacity as usize {
+        let o = poff + i * TREE_PROXY_SIZE;
+        proxies.push(read_tree_proxy(bytes, o));
+    }
+
+    // Divergence from C: the C reader trusts the blob's tree scalars. The port rejects a
+    // node end outside the node array so a corrupt blob fails the conversion instead of
+    // panicking on a later slice.
+    if header.node_end < 0 || header.node_end > node_capacity {
+        return None;
+    }
+
+    let mut tree = DynamicTree::zeroed();
+    tree.version = header.version;
     tree.nodes = nodes;
-    tree.root = root;
-    tree.node_count = node_count;
-    tree.free_list = free_list;
-    tree.proxy_count = proxy_count;
-    tree.rebuild_capacity = rebuild_capacity;
+    tree.proxies = proxies;
+    tree.node_end = header.node_end;
+    tree.pair_free_list = header.pair_free_list;
+    tree.proxy_count = header.proxy_count;
+    tree.proxy_free_list = header.proxy_free_list;
+    tree.rebuild_capacity = header.rebuild_capacity;
+    tree.dfs_ordered = header.dfs_ordered;
 
     let moff = section_offset(
         material_offset,
@@ -346,6 +320,7 @@ pub fn convert_bytes_to_compound(bytes: &[u8]) -> Option<CompoundData> {
         version,
         byte_count,
         node_offset,
+        proxy_offset,
         tree,
         material_offset,
         material_count,

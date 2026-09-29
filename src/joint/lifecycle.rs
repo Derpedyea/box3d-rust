@@ -615,7 +615,7 @@ pub fn joint_set_collide_connected(world: &mut World, joint_id: JointId, should_
             let proxy_key = world.shapes[shape_id as usize].proxy_key;
             let next = world.shapes[shape_id as usize].next_shape_id;
             if proxy_key != NULL_INDEX {
-                world.broad_phase.buffer_move(proxy_key);
+                world.broad_phase.mark_proxy_moved_serial(proxy_key);
             }
             shape_id = next;
         }

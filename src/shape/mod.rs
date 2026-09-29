@@ -31,11 +31,15 @@ pub mod shape_flags {
     pub const ENABLE_CUSTOM_FILTERING: u8 = 0x04;
     pub const ENABLE_HIT_EVENTS: u8 = 0x08;
     pub const ENABLE_PRE_SOLVE_EVENTS: u8 = 0x10;
-    pub const ENLARGED_AABB: u8 = 0x20;
+    // 0x20 is free, it was the enlarged AABB flag before the broad-phase marked the tree
     pub const ENABLE_SPECULATIVE: u8 = 0x40;
 }
 
 /// Concrete shape geometry. Maps to C's `type` tag + anonymous union.
+// The compound variant embeds the baked b3DynamicTree by value like the C blob; the
+// f555ee4 tree gained parent/proxy/rebuild arrays, pushing it past the lint threshold.
+// Boxing it would change this public enum, so that is left as a separate API decision.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum ShapeGeometry {
     Capsule(Capsule),

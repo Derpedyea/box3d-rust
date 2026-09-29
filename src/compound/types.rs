@@ -21,14 +21,13 @@ pub const COMPOUND_VERSION: u64 =
 /// (B3_MAX_COMPOUND_MESH_MATERIALS)
 pub const MAX_COMPOUND_MESH_MATERIALS: usize = 4;
 
-/// Size of the C `b3CompoundData` header on 64-bit (MSVC/GCC).
-pub const COMPOUND_DATA_SIZE: usize = 144;
+/// Size of the C `b3CompoundData` header on 64-bit (MSVC/GCC): version, byteCount,
+/// nodeOffset, proxyOffset, 4 bytes of padding, the 112 byte `b3DynamicTree`, then the 12
+/// trailing ints.
+pub const COMPOUND_DATA_SIZE: usize = 184;
 
-/// Size of the C `b3DynamicTree` on 64-bit.
-pub const DYNAMIC_TREE_SIZE: usize = 80;
-
-/// Size of the C `b3TreeNode` (union layout).
-pub const TREE_NODE_SIZE: usize = 48;
+/// Byte offset of the embedded `b3DynamicTree` inside the `b3CompoundData` header.
+pub const COMPOUND_TREE_OFFSET: usize = 24;
 
 /// Size of the C `b3HullInstance`.
 pub const HULL_INSTANCE_SIZE: usize = 36;
@@ -161,6 +160,10 @@ pub struct CompoundData {
     pub version: u64,
     pub byte_count: i32,
     pub node_offset: i32,
+    /// Offset of the tree proxy array in bytes from the struct address.
+    pub proxy_offset: i32,
+    /// Immutable dynamic tree. A baked tree is never inserted into, so the parent array
+    /// stays empty.
     pub tree: DynamicTree,
     pub material_offset: i32,
     pub material_count: i32,
@@ -189,6 +192,7 @@ impl Default for CompoundData {
             version: COMPOUND_VERSION,
             byte_count: 0,
             node_offset: 0,
+            proxy_offset: 0,
             tree: DynamicTree::new(0),
             material_offset: 0,
             material_count: 0,

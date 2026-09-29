@@ -8,11 +8,11 @@
 use super::types::{
     CompoundCapsule, CompoundData, CompoundDef, CompoundSphere, HullInstance, MeshInstance,
     COMPOUND_CONVEX_SIZE, COMPOUND_DATA_SIZE, COMPOUND_VERSION, HULL_INSTANCE_SIZE,
-    MAX_COMPOUND_MESH_MATERIALS, MESH_INSTANCE_SIZE, TREE_NODE_SIZE,
+    MAX_COMPOUND_MESH_MATERIALS, MESH_INSTANCE_SIZE,
 };
 use crate::constants::MAX_CHILD_SHAPES;
 use crate::core::NULL_INDEX;
-use crate::dynamic_tree::DynamicTree;
+use crate::dynamic_tree::{DynamicTree, TREE_NODE_SIZE, TREE_PROXY_SIZE};
 use crate::geometry::{
     compute_capsule_aabb, compute_sphere_aabb, SurfaceMaterial, SURFACE_MATERIAL_SIZE,
 };
@@ -197,7 +197,7 @@ pub fn create_compound(def: &CompoundDef<'_>) -> Option<CompoundData> {
 
     let material_count = materials.len() as i32;
     debug_assert!(material_count <= material_capacity);
-    debug_assert!(tree.node_count() > 0);
+    debug_assert!(tree.proxy_count() > 0);
 
     tree.rebuild(true);
 
@@ -206,8 +206,11 @@ pub fn create_compound(def: &CompoundDef<'_>) -> Option<CompoundData> {
 
     let mut byte_count = align_up8(COMPOUND_DATA_SIZE);
 
+    // Tree nodes and proxies. The rebuild is dense, so only the live nodes travel.
     let node_offset = byte_count as i32;
-    byte_count += align_up8(tree.node_capacity() as usize * TREE_NODE_SIZE);
+    byte_count += align_up8(tree.node_end() as usize * TREE_NODE_SIZE);
+    let proxy_offset = byte_count as i32;
+    byte_count += align_up8(tree.proxy_count() as usize * TREE_PROXY_SIZE);
 
     let material_offset = byte_count as i32;
     byte_count += align_up8(material_count as usize * SURFACE_MATERIAL_SIZE);
@@ -247,10 +250,22 @@ pub fn create_compound(def: &CompoundDef<'_>) -> Option<CompoundData> {
         inst.mesh_offset = shared_meshes[shared_index].mesh_offset as u32;
     }
 
-    // Immutable tree: scrub rebuild scratch and force free_list like C.
-    tree.free_list = 0;
-    tree.leaf_indices.clear();
-    tree.leaf_centers.clear();
+    // Immutable tree. C copies the tree struct into the blob and then fixes it up
+    // ("todo clean up this mess"): only the live node range and the proxies travel, the
+    // free lists are cleared, and the parent array, the spare array, and the rebuild
+    // scratch are dropped (a baked tree is never inserted into).
+    debug_assert!(tree.pair_free_list == NULL_INDEX);
+    let node_end = tree.node_end() as usize;
+    let proxy_count = tree.proxy_count() as usize;
+    tree.nodes.truncate(node_end);
+    tree.pair_free_list = NULL_INDEX;
+    tree.proxies.truncate(proxy_count);
+    tree.proxy_free_list = NULL_INDEX;
+    tree.parents = Vec::new();
+    tree.swap_nodes = Vec::new();
+    tree.leaf_indices = Vec::new();
+    tree.leaf_nodes = Vec::new();
+    tree.leaf_centers = Vec::new();
     tree.rebuild_capacity = 0;
 
     debug_assert!(material_count > 0);
@@ -259,6 +274,7 @@ pub fn create_compound(def: &CompoundDef<'_>) -> Option<CompoundData> {
         version: COMPOUND_VERSION,
         byte_count: byte_count as i32,
         node_offset,
+        proxy_offset,
         tree,
         material_offset,
         material_count,

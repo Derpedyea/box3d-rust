@@ -119,6 +119,8 @@ pub(crate) fn create_shape_internal(
         shape.generation = shape.generation.wrapping_add(1);
 
         if shape_type == ShapeType::Compound {
+            world.compound_shape_count += 1;
+
             // Own a copy of the compound materials so every shape frees its array
             // the same way. Compounds are few, so the copy is cheap and avoids
             // aliasing the geometry blob. (C: b3CreateShapeInternal)
@@ -499,6 +501,14 @@ pub(crate) fn destroy_shape_internal(
         let shape = &world.shapes[shape_index as usize];
         (shape.prev_shape_id, shape.next_shape_id, shape.sensor_index)
     };
+
+    // C b3DestroyBody tears shapes down inline and carries its own copy of this
+    // decrement; the port's destroy_body routes through this function, so this one
+    // decrement covers both paths.
+    if world.shapes[shape_index as usize].shape_type() == ShapeType::Compound {
+        debug_assert!(world.compound_shape_count > 0);
+        world.compound_shape_count -= 1;
+    }
 
     // Remove the shape from the body's doubly linked list.
     if prev_shape_id != NULL_INDEX {

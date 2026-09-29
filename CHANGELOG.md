@@ -12,6 +12,7 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
 
 - `47d7f7c` clockwise option, joint is awake (#130)
 - `954cf87` Fixes (#157)
+- `f555ee4` Optimize Broad-Phase (#159)
 
 ### Breaking
 
@@ -64,6 +65,35 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
   `FILTER_JOINT_COUNT` is 9, and `create_human` now creates three filter
   joints (thighs, neck and each upper arm). Bone frames, capsules, per-bone
   friction, joint limits, and foot capsules on the calves all changed.
+- The dynamic tree is rewritten to upstream `f555ee4`'s layout: `TreeNode` is
+  the 32-byte `{ aabb, flag_index, height }` node (siblings paired at even
+  indices, root at 0, index 1 always empty), and category bits and user data
+  live in the new `TreeProxy` array. `DYNAMIC_TREE_VERSION` is now
+  `0x1D6F4C2A73B80E91`, which also changes `COMPOUND_VERSION`; baked compounds
+  and saved trees from earlier versions no longer load. The `b3TreeNodeFlags`
+  constants (`ALLOCATED_NODE`, `ENLARGED_NODE`, the old `LEAF_NODE`) are
+  replaced by the `MOVED_NODE` / `LEAF_NODE` / `EMPTY_NODE` flag-index bits.
+- `DynamicTree::validate_no_enlarged` is renamed `validate_no_moved`
+  (b3DynamicTree_ValidateNoMoved), and `BroadPhase::validate_no_enlarged` is
+  renamed `validate_no_moved`. `DynamicTree::node_count` and `root_index` are
+  removed (use `node_end` and `ROOT_NODE`). `user_data` / `aabb` now resolve
+  the proxy id through the proxy array, so proxy ids are no longer node
+  indices.
+- `TreeNodeView` (from `DynamicTree::node_views`) now describes the sibling
+  pair layout: `left_child`, `proxy_id`, `user_data`, `is_leaf`, `is_empty`,
+  `is_moved`, and covers only nodes below `node_end`.
+- `BroadPhase` drops `moved_proxies`, `move_array`, `buffer_move`, and
+  `enlarge_proxy`; moves are marks in the trees (`mark_proxy_moved`,
+  `mark_proxy_moved_serial`). `TaskContext::enlarged_sim_bit_set` is replaced
+  by `TaskContext::pair_keys`, the shape flag `ENLARGED_AABB` is removed, and
+  `World` gains `compound_shape_count`.
+- The baked compound blob gains `proxy_offset` and stores only the live node
+  range plus the proxy array (header 144 -> 184 bytes).
+- Recording format minor version advances to 6 and the world snapshot version
+  to 5 (upstream `f555ee4`): snapshots store the tree node end, pair free
+  list, proxy capacity and free list, DFS order flag, nodes and parents up to
+  the node end, the proxies, and `World::compound_shape_count`; the move
+  buffer is gone. Older snapshots are rejected.
 
 ### Changed
 
@@ -103,6 +133,18 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
   2D hull and simplify it to the target.
 - The human ragdoll rewrite changes the ragdoll and wave-pile determinism
   scenes; both precision modes match upstream's new golden hashes.
+- New broad-phase pair finder (upstream `f555ee4`, ported from Box2D): the
+  dynamic tree collides against itself through its moved sibling pairs and
+  against the static and kinematic trees through a seeded tree-against-tree
+  traversal. Candidates are batched, culled against the pair set, and
+  collected as pair keys that are sorted before contacts are created, so
+  contact creation order follows shape order instead of tree structure. The
+  ragdoll, wave-pile, and query-spawn goldens change and match upstream in
+  both precision modes.
+- The tree rebuild puts the whole tree in DFS order and keeps unmoved
+  subtrees; the solver refits the kinematic and dynamic trees with a sweep
+  over the moved marks instead of enlarging proxies one by one. Bullets only
+  enlarge a proxy when the tree box no longer contains the shape's fat box.
 
 ### Fixed
 
@@ -201,6 +243,15 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
   safety-factor additions to the recording `AllOps` session (as a focused
   round-trip test), and the determinism `EnsureRepeatable` /
   `ENSURE_GOLDEN` structure.
+- Upstream `f555ee4` tree API: `DynamicTree::save` / `load` (b3DynamicTree_Save
+  / Load, byte-compatible with the C file format) plus `save_to_bytes` /
+  `load_from_bytes`, `refit`, `mark_proxy_moved`, `mark_proxy_moved_serial`,
+  `clear_moved`, `gather_moved_proxies`, `create_proxy_internal`,
+  `move_proxy_internal`, `has_tree_moved`, `needs_rebuild`, `node_end`,
+  `dfs_ordered`, `proxy_capacity`, and `table::HashSet::contains_hashed_key`.
+- Ported upstream `f555ee4` tests: `test_dynamic_tree.c` (8), world
+  `TestCompoundShapeCount` and the reworked `TestEnlargedProxyDestroyed`
+  (`CountMovedNodes`), and the compound tree asserts.
 
 ## 0.3.0
 
