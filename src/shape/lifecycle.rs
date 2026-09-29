@@ -481,7 +481,7 @@ pub(crate) fn destroy_shape_allocation_for_shape_change(world: &mut World, shape
 
 /// Free hull-database and material allocations for a shape.
 /// (b3DestroyShapeAllocations)
-fn destroy_shape_allocations(world: &mut World, shape_index: i32) {
+pub(crate) fn destroy_shape_allocations(world: &mut World, shape_index: i32) {
     destroy_shape_allocation_for_shape_change(world, shape_index);
     world.shapes[shape_index as usize].materials.clear();
 }

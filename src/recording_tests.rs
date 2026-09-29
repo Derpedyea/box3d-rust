@@ -147,3 +147,40 @@ fn snapshot_hull_geometry_interned() {
     }
     assert_eq!(hash_world_state(&world), hash_world_state(&clone));
 }
+
+/// Restoring a snapshot over a live world must drop the hull-database entries of the
+/// shapes it overwrites, exactly as b3FreeLiveSimElements calls b3RemoveHullFromDatabase
+/// for every live hull shape. Two shapes share the overwritten hull so the per-shape
+/// reference release is exercised, not just the single-owner case.
+#[test]
+fn snapshot_restore_releases_overwritten_hulls() {
+    // Source image: one shape using a 1x1x1 box hull.
+    let mut source = World::new(&default_world_def());
+    let body = create_body(&mut source, &default_body_def());
+    let small_box = make_box_hull(1.0, 1.0, 1.0);
+    create_hull_shape(&mut source, body, &default_shape_def(), &small_box.base);
+
+    let mut registry = GeometryRegistry::new();
+    let mut buf = RecBuffer::new();
+    serialize_world(&source, &mut buf, &mut registry);
+    let mut slots = registry.to_slots();
+
+    // Target: a live world whose two shapes share a different (large) box hull.
+    let mut target = World::new(&default_world_def());
+    let body = create_body(&mut target, &default_body_def());
+    let big_box = make_box_hull(3.0, 2.0, 1.0);
+    create_hull_shape(&mut target, body, &default_shape_def(), &big_box.base);
+    create_hull_shape(&mut target, body, &default_shape_def(), &big_box.base);
+    assert_eq!(target.hull_database.len(), 1);
+
+    assert!(deserialize_into_shell(&buf.data, &mut target, &mut slots));
+
+    // Only the restored small-box hull may remain; the overwritten big-box entry is released.
+    assert_eq!(target.hull_database.len(), 1);
+    assert_eq!(hash_world_state(&source), hash_world_state(&target));
+
+    // Destroying the restored shape empties the database (C asserts this in b3DestroyWorld).
+    let restored_body = crate::body::make_body_id(&target, 0);
+    crate::body::destroy_body(&mut target, restored_body);
+    assert!(target.hull_database.is_empty());
+}

@@ -231,9 +231,6 @@ pub fn des_shapes(r: &mut SnapReader<'_>, world: &mut World, slots: &mut [Regist
         saved_generation.push(old.generation);
     }
 
-    // Release hulls before overwrite
-    free_live_shapes(world);
-
     world.shapes.clear();
     world.shapes.reserve(count.max(0) as usize);
 
@@ -383,9 +380,15 @@ pub fn free_live_shapes(world: &mut World) {
             continue;
         }
         world.shapes[i].materials.clear();
-        if let ShapeGeometry::Hull(ref hull) = world.shapes[i].geometry {
-            let hull = hull.clone();
-            world.hull_database.release(&hull);
+        // Hull is ref-counted in the world DB; release before overwrite so re-adding is
+        // ref-neutral. Move the shape's Arc out (C: `s->hull = NULL`) rather than cloning it:
+        // HullDatabase::release keys on strong_count == 2 (shape + DB), so an extra clone would
+        // keep the entry alive forever. Clearing the geometry also makes a repeat call a no-op.
+        if matches!(world.shapes[i].geometry, ShapeGeometry::Hull(_)) {
+            let geometry = std::mem::take(&mut world.shapes[i].geometry);
+            if let ShapeGeometry::Hull(hull) = &geometry {
+                world.hull_database.release(hull);
+            }
         }
     }
 }

@@ -11,7 +11,6 @@
 /// world re-seed, and drives the destroy callback at teardown. (DebugShapeCallbacks)
 #[test]
 fn debug_shape_callbacks() {
-    use crate::body::destroy_body;
     use crate::debug_draw::{DebugDraw, DebugShape, HexColor};
     use crate::dynamic_tree::DEFAULT_MASK_BITS;
     use crate::math_functions::{Aabb, WorldTransform};
@@ -123,15 +122,12 @@ fn debug_shape_callbacks() {
     };
     let mut player = RecPlayer::create(rec.data(), 1).expect("player");
 
-    // Wiring the callbacks is the Rust analog of b3RecPlayer_SetDebugShapeCallbacks. The C API
-    // rebuilds the world at frame 0; the Rust player owns one persistent World already parked at
-    // frame 0, so we set the callback fields on it directly.
-    {
-        let w = player.world_mut();
-        w.create_debug_shape = Some(rec_test_create_debug_shape);
-        w.destroy_debug_shape = Some(rec_test_destroy_debug_shape);
-        w.user_debug_shape_context = &counters as *const DebugShapeCounters as u64;
-    }
+    // Wiring the callbacks rebuilds the world and rewinds to frame 0.
+    player.set_debug_shape_callbacks(
+        Some(rec_test_create_debug_shape),
+        Some(rec_test_destroy_debug_shape),
+        &counters as *const DebugShapeCounters as u64,
+    );
     assert_eq!(player.get_frame(), 0);
 
     // Replay to the end, then draw: createDebugShape fires once per shape (ground + 4 boxes = 5).
@@ -175,24 +171,100 @@ fn debug_shape_callbacks() {
         created_before
     );
 
-    // Teardown: destroy the live bodies through the production body API, the Rust analog of
-    // b3DestroyWorld releasing the final world's debug-shape handles. Every drawn shape holds a
-    // handle, so destroyDebugShape fires for each and the create/destroy counts balance exactly,
-    // matching C's DebugShapeCallbacks teardown invariant.
-    let ids: Vec<_> = (0..player.get_body_count())
-        .map(|i| player.get_body_id(i))
-        .collect();
-    {
-        let w = player.world_mut();
-        for id in ids {
-            destroy_body(w, id);
-        }
-    }
+    // Teardown destroys the final world (b3DestroyPlayer -> b3DestroyWorld); every live shape is
+    // released through destroyDebugShape, so the create/destroy counts balance exactly.
     assert!(counters.created.get() >= 10);
+    drop(player);
     assert_eq!(counters.created.get(), counters.destroyed.get());
 
-    drop(player);
     drop(world);
     // `counters` outlives `player`; keep it referenced until here for clarity.
     let _ = &counters;
+}
+
+/// Re-wiring the debug-shape callbacks destroys the current replay world (b3DestroyWorld inside
+/// b3RecPlayer_SetDebugShapeCallbacks), releasing every live debug-shape handle, then rebuilds
+/// frame 0 under the new wiring.
+#[test]
+fn debug_shape_callbacks_rewire_releases_old_world() {
+    use crate::debug_draw::{DebugDraw, DebugShape, HexColor};
+    use crate::dynamic_tree::DEFAULT_MASK_BITS;
+    use crate::math_functions::{Aabb, WorldTransform};
+    use crate::recording::RecPlayer;
+    use crate::world::world_draw;
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    struct Counters {
+        created: AtomicI32,
+        destroyed: AtomicI32,
+    }
+
+    fn create_cb(_shape: &DebugShape<'_>, ctx: u64) -> u64 {
+        // SAFETY: `ctx` is the address of a `Counters` that outlives the player.
+        let c = unsafe { &*(ctx as *const Counters) };
+        c.created.fetch_add(1, Ordering::Relaxed);
+        1
+    }
+
+    fn destroy_cb(_user_shape: u64, ctx: u64) {
+        // SAFETY: see create_cb.
+        let c = unsafe { &*(ctx as *const Counters) };
+        c.destroyed.fetch_add(1, Ordering::Relaxed);
+    }
+
+    struct AllDraw;
+    impl DebugDraw for AllDraw {
+        fn draw_shape(&mut self, _user_shape: u64, _transform: WorldTransform, _color: HexColor) {}
+        fn drawing_bounds(&self) -> Aabb {
+            let big = 1.0e6;
+            Aabb {
+                lower_bound: Vec3 {
+                    x: -big,
+                    y: -big,
+                    z: -big,
+                },
+                upper_bound: Vec3 {
+                    x: big,
+                    y: big,
+                    z: big,
+                },
+            }
+        }
+        fn draw_shapes(&self) -> bool {
+            true
+        }
+    }
+
+    let mut world = recorded_sphere_world();
+    let rec = world_stop_recording(&mut world).expect("recording active");
+
+    let counters = Counters {
+        created: AtomicI32::new(0),
+        destroyed: AtomicI32::new(0),
+    };
+    let ctx = &counters as *const Counters as u64;
+    let mut player = RecPlayer::create(rec.data(), 1).expect("player");
+    player.set_debug_shape_callbacks(Some(create_cb), Some(destroy_cb), ctx);
+
+    for _ in 0..10 {
+        player.step_frame();
+    }
+    world_draw(player.world_mut(), &mut AllDraw, DEFAULT_MASK_BITS);
+    let created = counters.created.load(Ordering::Relaxed);
+    assert_eq!(created, 2, "ground + sphere");
+    assert_eq!(counters.destroyed.load(Ordering::Relaxed), 0);
+
+    // Re-wiring tears down the stepped world: both live handles are released, and the player
+    // rewinds to frame 0.
+    player.set_debug_shape_callbacks(Some(create_cb), Some(destroy_cb), ctx);
+    assert_eq!(counters.destroyed.load(Ordering::Relaxed), created);
+    assert_eq!(player.get_frame(), 0);
+    assert!(!player.is_at_end());
+
+    // The rebuilt world replays to the end without diverging.
+    while !player.is_at_end() {
+        player.step_frame();
+    }
+    assert!(!player.has_diverged());
+    drop(player);
 }

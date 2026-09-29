@@ -336,6 +336,11 @@ pub struct World {
     /// The `RefCell` lets the `&World` query functions append their records,
     /// which C does through the mutable pointer; mutators reach it without a
     /// runtime borrow check via `RefCell::get_mut`.
+    ///
+    /// Do not hold a `borrow()` / `borrow_mut()` of this cell across a world
+    /// query call (overlap/cast/etc.): the query borrows it mutably to append
+    /// its record, so an outstanding borrow makes that call panic.
+    /// [`destroy_world`] finalizes and returns an active recording.
     pub recording: Option<Box<std::cell::RefCell<crate::recording::Recording>>>,
 }
 

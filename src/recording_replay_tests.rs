@@ -10,7 +10,9 @@ use crate::math_functions::{Pos, Vec3, VEC3_ZERO};
 use crate::recording::{validate_replay, Recording, REC_MAGIC};
 use crate::shape::{create_hull_shape, create_sphere_shape};
 use crate::types::{default_body_def, default_shape_def, default_world_def, BodyType};
-use crate::world::{world_set_gravity, world_start_recording, world_stop_recording, World};
+use crate::world::{
+    destroy_world, world_set_gravity, world_start_recording, world_stop_recording, World,
+};
 
 /// Sphere round-trip: record/step/stop, then replay and validate. (SphereRoundTrip)
 #[test]
@@ -265,6 +267,99 @@ fn mid_stream_contacts() {
 
     let rec = world_stop_recording(&mut world).expect("recording active");
     assert!(validate_replay(rec.data(), 1));
+}
+
+/// Build the SphereRoundTrip scene with a recording attached and step it 30 frames.
+fn recorded_sphere_world() -> World {
+    let mut world = World::new(&default_world_def());
+    world_start_recording(&mut world, Recording::new(0));
+    world_set_gravity(
+        &mut world,
+        Vec3 {
+            x: 0.0,
+            y: -10.0,
+            z: 0.0,
+        },
+    );
+
+    let mut ground_def = default_body_def();
+    ground_def.type_ = BodyType::Static;
+    let ground_id = create_body(&mut world, &ground_def);
+    let ground_box = make_box_hull(50.0, 1.0, 50.0);
+    create_hull_shape(
+        &mut world,
+        ground_id,
+        &default_shape_def(),
+        &ground_box.base,
+    );
+
+    let mut body_def = default_body_def();
+    body_def.type_ = BodyType::Dynamic;
+    body_def.position = Pos {
+        x: 0.0,
+        y: 5.0,
+        z: 0.0,
+    };
+    let body_id = create_body(&mut world, &body_def);
+    let sphere = Sphere {
+        center: VEC3_ZERO,
+        radius: 0.5,
+    };
+    let mut sphere_def = default_shape_def();
+    sphere_def.density = 1.0;
+    create_sphere_shape(&mut world, body_id, &sphere_def, &sphere);
+
+    for _ in 0..30 {
+        world.step(1.0 / 60.0, 4);
+    }
+    world
+}
+
+/// b3DestroyWorld detaches and finalizes an active recording (b3StopRecordingInternal) before
+/// teardown. The finalized stream must be byte-identical to an explicit stop and replay cleanly.
+#[test]
+fn destroy_world_finalizes_active_recording() {
+    let mut stopped_world = recorded_sphere_world();
+    let stopped = world_stop_recording(&mut stopped_world).expect("recording active");
+
+    let destroyed = destroy_world(recorded_sphere_world()).expect("recording finalized");
+
+    assert_eq!(destroyed.data(), stopped.data());
+    assert!(validate_replay(destroyed.data(), 1));
+}
+
+/// Without an active recording, destroy_world returns None and still releases every live shape
+/// through b3DestroyShapeAllocations: the host debug-shape handles are destroyed and the hull
+/// database drains.
+#[test]
+fn destroy_world_releases_shape_allocations() {
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    fn count_destroy(_user_shape: u64, ctx: u64) {
+        // SAFETY: `ctx` is the address of an AtomicI32 that outlives destroy_world below.
+        let counter = unsafe { &*(ctx as *const AtomicI32) };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    let destroyed = AtomicI32::new(0);
+    let mut def = default_world_def();
+    def.destroy_debug_shape = Some(count_destroy);
+    def.user_debug_shape_context = &destroyed as *const AtomicI32 as u64;
+    let mut world = World::new(&def);
+
+    let body_id = create_body(&mut world, &default_body_def());
+    let box_hull = make_box_hull(1.0, 1.0, 1.0);
+    create_hull_shape(&mut world, body_id, &default_shape_def(), &box_hull.base);
+    create_hull_shape(&mut world, body_id, &default_shape_def(), &box_hull.base);
+    assert_eq!(world.hull_database.len(), 1);
+
+    // Stand in for the renderer handles world_draw would have created lazily.
+    for shape in world.shapes.iter_mut() {
+        shape.user_shape = 1;
+    }
+
+    assert!(destroy_world(world).is_none());
+    assert_eq!(destroyed.load(Ordering::Relaxed), 2);
 }
 
 include!("recording_replay_tests_extra.rs");

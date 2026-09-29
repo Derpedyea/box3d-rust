@@ -4,6 +4,7 @@
 //! SPDX-License-Identifier: MIT
 
 use crate::core::{get_length_units_per_meter, set_length_units_per_meter};
+use crate::debug_draw::{CreateDebugShapeCallback, DestroyDebugShapeCallback};
 use crate::id::BodyId;
 use crate::math_functions::{Aabb, Vec3};
 use crate::recording::dispatch::{dispatch_one, RecReader};
@@ -12,7 +13,7 @@ use crate::recording::registry::{GeometryKind, RegistrySlot};
 use crate::recording::session::{RecHeader, RecTag, REC_MAGIC, REC_VERSION_MAJOR};
 use crate::recording::snapshot::deserialize_into_shell;
 use crate::types::default_world_def;
-use crate::world::World;
+use crate::world::{destroy_world, destroy_world_in_place, World};
 use std::collections::HashMap;
 
 const KEYFRAME_INTERVAL_DEFAULT: i32 = 16;
@@ -117,6 +118,7 @@ impl RecPlayer {
             &mut slots,
         ) {
             eprintln!("b3RecPlayer_Create: snapshot deserialization failed");
+            destroy_world(world);
             set_length_units_per_meter(previous_length_scale);
             return None;
         }
@@ -400,6 +402,52 @@ impl RecPlayer {
         self.last_keyframe_frame = 0;
     }
 
+    /// Wire the host debug-shape callbacks into the replay world.
+    /// (b3RecPlayer_SetDebugShapeCallbacks)
+    ///
+    /// A world fixes its debug-shape callbacks at creation, so rebuild frame 0 under the new
+    /// wiring. The old world is destroyed first, releasing any debug shapes it created.
+    /// Geometry slots are byte blobs reused as-is, the same path Restart relies on.
+    pub fn set_debug_shape_callbacks(
+        &mut self,
+        create_debug_shape: Option<CreateDebugShapeCallback>,
+        destroy_debug_shape: Option<DestroyDebugShapeCallback>,
+        context: u64,
+    ) {
+        destroy_world_in_place(&mut self.world);
+
+        // (b3RecPlayerCreateWorld)
+        let mut def = default_world_def();
+        def.create_debug_shape = create_debug_shape;
+        def.destroy_debug_shape = destroy_debug_shape;
+        def.user_debug_shape_context = context;
+        self.world = World::new(&def);
+
+        self.reader_cursor = self.header_end;
+        self.reader_ok = true;
+        self.reader_diverged = false;
+        self.frame = 0;
+        self.diverge_frame = -1;
+        self.at_end = false;
+
+        // Re-seed the world so its shapes are recreated through the new callbacks.
+        let start = self.frame0_image_start;
+        let end = start + self.frame0_image_size;
+        if !deserialize_into_shell(
+            &self.data[start..end],
+            &mut self.world,
+            &mut self.reader_slots,
+        ) {
+            self.reader_ok = false;
+            return;
+        }
+        self.reader_cursor = self.header_end;
+
+        // Rebuild the outliner from the frame-0 world that was just stood up under the new
+        // callbacks.
+        self.seed_frame0_body_ids();
+    }
+
     /// (b3RecPlayer_SeekFrame)
     pub fn seek_frame(&mut self, target_frame: i32) {
         if target_frame <= self.frame {
@@ -511,7 +559,12 @@ pub struct RecPlayerInfo {
 }
 
 impl Drop for RecPlayer {
+    /// (b3DestroyPlayer)
     fn drop(&mut self) {
+        // Tear down the replay world first so the host's destroyDebugShape sees every live
+        // shape, as b3DestroyPlayer does via b3DestroyWorld. No reader holds a raw pointer to
+        // `self.world` here: RecReader only lives inside `with_reader`.
+        destroy_world_in_place(&mut self.world);
         set_length_units_per_meter(self.previous_length_scale);
     }
 }

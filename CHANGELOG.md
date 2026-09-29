@@ -61,8 +61,32 @@ this port follows its API and behavior.
   and an early return when no valid edge contact exists. Simulation results
   change; determinism hashes match upstream's new constants in both
   precision modes.
+- Restoring a snapshot over a live world (recording seek / re-seed) leaked the
+  hull-database entries of the overwritten hull shapes: the release cloned the
+  shape's `Arc` first, so the reference-count check never matched. The shape's
+  hull reference is now moved out and released, as C's
+  `b3FreeLiveSimElements` does.
+- Tearing down a world now finalizes an active recording, matching
+  `b3DestroyWorld` calling `b3StopRecordingInternal`: use the new
+  `world::destroy_world` (see Added). Merely dropping a `World` still
+  discards an active recording unfinalized.
+- `RecPlayer` now destroys its replay world the way C does: dropping the
+  player (b3DestroyPlayer) and a failed snapshot seed in `RecPlayer::create`
+  go through `destroy_world`, so the host's `destroy_debug_shape` fires for
+  every live replayed shape at teardown.
+- Snapshot restore no longer releases live shapes a second time inside the
+  shape deserializer; the single release in `deserialize_into_shell` matches
+  C's `b3DesShapes` / `b3FreeLiveSimElements`.
 
 ### Added
+
+- `world::destroy_world(world: World) -> Option<Recording>` (b3DestroyWorld):
+  consumes the world, finalizes and returns any active recording, then
+  releases every live shape's allocations (hull-database references and
+  `destroy_debug_shape` host handles).
+- `RecPlayer::set_debug_shape_callbacks` (b3RecPlayer_SetDebugShapeCallbacks):
+  destroys the current replay world, rebuilds frame 0 under the new
+  debug-shape callbacks, and rewinds the player.
 
 - New `rapidhash` module and `core::hash64_non_zero`, with the `test_hash.c`
   suite ported.

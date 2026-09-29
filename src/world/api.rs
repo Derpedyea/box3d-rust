@@ -657,3 +657,38 @@ pub fn world_start_recording(world: &mut World, recording: crate::recording::Rec
 pub fn world_stop_recording(world: &mut World) -> Option<crate::recording::Recording> {
     crate::recording::stop_recording(world)
 }
+
+/// Destroy a world, consuming it. Any active recording is finalized first (bounds,
+/// `DestroyWorld` op, trailing registry, header backpatch) and returned to the caller, who
+/// owns it just as C's user owns the recording buffer. Returns `None` if no session was
+/// active. (b3DestroyWorld)
+///
+/// Every live shape's allocations are then released as in C: hull-database references are
+/// dropped and host debug-shape handles go through `destroy_debug_shape`. The remaining
+/// C teardown (arrays, pools, allocators, scheduler) is handled by Rust ownership when the
+/// `World` is dropped here. Simply dropping a `World` without calling this discards an active
+/// recording unfinalized and does not fire `destroy_debug_shape`.
+pub fn destroy_world(mut world: World) -> Option<crate::recording::Recording> {
+    destroy_world_in_place(&mut world)
+}
+
+/// The body of [`destroy_world`] for owners that cannot give up the `World` value (the replay
+/// player holds its world inline and tears it down from `Drop`). The world must not be used
+/// afterwards except to drop or replace it. (b3DestroyWorld)
+pub(crate) fn destroy_world_in_place(world: &mut World) -> Option<crate::recording::Recording> {
+    world.locked = true;
+
+    // Detach any recording before teardown. The user owns and frees the recording buffer.
+    let recording = crate::recording::stop_recording(world);
+
+    for i in 0..world.shapes.len() {
+        if world.shapes[i].id != crate::core::NULL_INDEX {
+            crate::shape::lifecycle::destroy_shape_allocations(world, i as i32);
+        }
+    }
+
+    // Destroying every shape above released all hull references, so the database is empty.
+    debug_assert!(world.hull_database.is_empty());
+
+    recording
+}
