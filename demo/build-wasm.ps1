@@ -4,7 +4,7 @@ Push-Location $PSScriptRoot/wasm
 # often lacks it on PATH; fall back so `bun run build:wasm` still succeeds.
 $extra = @()
 if (-not (Get-Command wasm-opt -ErrorAction SilentlyContinue)) {
-  Write-Host "wasm-opt not found on PATH — building without Binaryen optimize (CI still uses -O3)."
+  Write-Host "wasm-opt not found on PATH - building without Binaryen optimize (CI still uses -O3)."
   $extra += "--no-opt"
 }
 

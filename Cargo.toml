@@ -3,7 +3,7 @@ members = [".", "demo/wasm"]
 
 [package]
 name = "box3d-rust"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.77"
 authors = ["Lars Brubaker <larsbrubaker@matterhackers.com>"]
@@ -23,6 +23,7 @@ exclude = [
     "Tests/",
     ".github/",
     ".claude/",
+    ".cursor/",
     "benches/",
     "scripts/",
     "CLAUDE.md",

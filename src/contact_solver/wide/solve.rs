@@ -5,14 +5,14 @@
 //! SPDX-License-Identifier: MIT
 
 use super::{
-    add_v2w, add_vw, cross_w, dot_w, gather_bodies, inv_rotate_vector_w, mul_add_mvw, mul_add_svw,
-    mul_mv2w, mul_mvw, mul_sub_mvw, mul_sub_svw, mul_svw, scatter_bodies, sub_vw,
-    ContactConstraintWide, Vec2W, Vec3W,
+    add_v2w, gather_bodies, inv_rotate_vector_w, mul_add_mvw, mul_mv2w, mul_mvw, mul_sub_mvw,
+    scatter_bodies, ContactConstraintWide, Vec2W,
 };
 use crate::body::BodyState;
 use crate::simd_scalar::{
-    add_w, all_zero_w, blend_w, div_w, greater_than_w, max_w, mul_add_w, mul_w, neg_w, soft_mask_w,
-    splat_w, sqrt_w, sub_w, sym_clamp_w, zero_w,
+    add_vw, add_w, all_zero_w, blend_w, cross_w, div_w, dot_w, greater_than_w, max_w, mul_add_svw,
+    mul_add_w, mul_sub_svw, mul_svw, mul_w, neg_w, soft_mask_w, splat_w, sqrt_w, sub_vw, sub_w,
+    sym_clamp_w, zero_w, Vec3W,
 };
 use crate::solver::StepContext;
 

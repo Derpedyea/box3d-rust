@@ -3,12 +3,14 @@
 All notable changes to box3d-rust are documented here. This project adheres to
 semantic versioning (0.x: minor-compatible additive changes bump the patch number).
 
-## Unreleased
+## 0.4.0
 
-Upstream sync: the C reference pin advances to `9f998c8`, by way of `30c67b5`
+This release syncs the port to upstream Box3D `9f998c8` and makes `World`
+`Send` (#1). The C reference pin advances to `9f998c8` by way of `30c67b5`
 (upstream v0.2.0: 64-bit rapidhash geometry hashes and triangle manifold
 collision fixes), and this port follows its API and behavior. The sync ran one
-upstream commit at a time and is complete at `9f998c8`. Ported:
+upstream commit at a time. Simulation results are not bit-compatible with
+0.3.0. Ported:
 
 - `47d7f7c` clockwise option, joint is awake (#130)
 - `954cf87` Fixes (#157)
@@ -163,6 +165,11 @@ upstream commit at a time and is complete at `9f998c8`. Ported:
   instance array, and `COMPOUND_VERSION` changes (seed
   `0x7A2F41C9E6D0B358`). Baked compounds from earlier versions no longer
   load.
+- The compatibility re-exports in `contact_solver::wide` are removed:
+  `contact_solver::wide::SIMD_WIDTH` (use `core::SIMD_WIDTH`) and the wide
+  vec3 helpers `Vec3W`, `add_vw`, `sub_vw`, `cross_w`, `dot_w`, `mul_svw`,
+  `mul_add_svw`, and `mul_sub_svw`, which moved to the crate-internal
+  `simd_scalar` module with upstream `9f998c8`.
 
 ### Changed
 
@@ -371,6 +378,9 @@ upstream commit at a time and is complete at `9f998c8`. Ported:
   `Pos` / `WorldTransform` (widening f32 inputs, narrowing to f32 only for
   render data) instead of assuming they are `f32`. CI now checks the whole
   workspace in both precision modes.
+- `demo/build-wasm.ps1` and `scripts/pre-commit-check.ps1` are now pure ASCII,
+  so Windows PowerShell 5.1 (which reads BOM-less scripts as ANSI) parses
+  them. A non-ASCII em dash had broken `bun run build:wasm` on 5.1.
 
 ### Added
 
@@ -438,6 +448,7 @@ upstream commit at a time and is complete at `9f998c8`. Ported:
 
 Upstream sync: the C reference pin advances to `c52908c` and this port follows
 its API and behavior. Simulation results are not bit-compatible with 0.2.x.
+This version was never published to crates.io.
 
 ### Breaking
 

@@ -58,9 +58,9 @@ arena/block allocators (Rust `Vec`s).
 
 ```toml
 [dependencies]
-box3d-rust = "0.3"
+box3d-rust = "0.4"
 # Optional: large-world positions (mirrors BOX3D_DOUBLE_PRECISION)
-# box3d-rust = { version = "0.3", features = ["double-precision"] }
+# box3d-rust = { version = "0.4", features = ["double-precision"] }
 ```
 
 ```rust

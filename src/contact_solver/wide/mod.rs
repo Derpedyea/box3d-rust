@@ -21,18 +21,12 @@ pub use store::store_impulses_convex;
 
 use crate::body::{body_flags, BodyState, IDENTITY_BODY_STATE};
 use crate::constants::MAX_MANIFOLD_POINTS;
-use crate::core::NULL_INDEX;
-// Kept at the public `contact_solver::wide::SIMD_WIDTH` path for API compatibility.
-pub use crate::core::SIMD_WIDTH;
+use crate::core::{NULL_INDEX, SIMD_WIDTH};
 // The wide vec3 type and its helpers live in `simd.h` upstream (moved there from
-// contact_solver.c in 9f998c8); re-exported so the solver kernels keep one path to them.
-use crate::simd_scalar::{abs_w, blend_w};
-pub use crate::simd_scalar::{
-    add_vw, cross_w, dot_w, mul_add_svw, mul_sub_svw, mul_svw, sub_vw, Vec3W,
-};
+// contact_solver.c in 9f998c8), so they are imported from `crate::simd_scalar`.
 use crate::simd_scalar::{
-    add_w, div_w, greater_than_w, less_than_w, mul_w, neg_w, or_w, set_w, splat_w, sqrt_w, sub_w,
-    zero_w, FloatW,
+    abs_w, add_w, blend_w, cross_w, div_w, dot_w, greater_than_w, less_than_w, mul_svw, mul_w,
+    neg_w, or_w, set_w, splat_w, sqrt_w, sub_w, zero_w, FloatW, Vec3W,
 };
 
 /// Wide vec2. (b3Vec2W)

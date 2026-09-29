@@ -4,13 +4,13 @@
 //! SPDX-License-Identifier: MIT
 
 use super::{
-    add_vw, cross_w, dot_w, gather_bodies, make_matrix_from_quat_w, mul_add_mvw, mul_add_svw,
-    mul_m3vw, mul_sub_mvw, mul_sub_svw, mul_svw, scatter_bodies, sub_vw, ContactConstraintWide,
+    gather_bodies, make_matrix_from_quat_w, mul_add_mvw, mul_m3vw, mul_sub_mvw, scatter_bodies,
+    ContactConstraintWide,
 };
 use crate::body::BodyState;
 use crate::simd_scalar::{
-    add_w, all_zero_w, and_w, blend_w, greater_than_w, less_than_w, max_w, min_w, mul_w, neg_w,
-    splat_w, sub_w, zero_w,
+    add_vw, add_w, all_zero_w, and_w, blend_w, cross_w, dot_w, greater_than_w, less_than_w, max_w,
+    min_w, mul_add_svw, mul_sub_svw, mul_svw, mul_w, neg_w, splat_w, sub_vw, sub_w, zero_w,
 };
 use crate::solver::StepContext;
 
