@@ -3,12 +3,12 @@
 //! SPDX-FileCopyrightText: 2025 Erin Catto
 //! SPDX-License-Identifier: MIT
 
-use super::lifecycle::{get_body_full_id, get_body_transform};
+use super::lifecycle::{get_body_full_id, get_body_sim, get_body_transform};
 use crate::contact::contact_flags;
 use crate::core::NULL_INDEX;
 use crate::events::ContactData;
 use crate::id::{BodyId, ContactId, JointId, ShapeId};
-use crate::math_functions::{aabb_union, to_vec3, Aabb, VEC3_ZERO};
+use crate::math_functions::{aabb_union, abs, add, to_vec3, Aabb, Vec3, VEC3_ZERO};
 use crate::world::World;
 
 /// (b3Body_GetShapeCount)
@@ -152,4 +152,27 @@ pub fn body_compute_aabb(world: &World, body_id: BodyId) -> Aabb {
     }
 
     aabb
+}
+
+/// The minimum distance from any shape to the shape centroid. (b3Body_GetMinExtent)
+pub fn body_get_min_extent(world: &World, body_id: BodyId) -> f32 {
+    let body_index = get_body_full_id(world, body_id);
+    let body_sim = get_body_sim(world, body_index);
+    body_sim.min_extent
+}
+
+/// The maximum extent vector from any point on the body shapes to the center of
+/// mass. (b3Body_GetMaxExtent)
+pub fn body_get_max_extent(world: &World, body_id: BodyId) -> Vec3 {
+    let body_index = get_body_full_id(world, body_id);
+    let body_sim = get_body_sim(world, body_index);
+    body_sim.max_extent
+}
+
+/// The maximum extent vector from any point on the body shapes to the body origin.
+/// Conservative. (b3Body_GetMaxExtentOrigin)
+pub fn body_get_max_extent_origin(world: &World, body_id: BodyId) -> Vec3 {
+    let body_index = get_body_full_id(world, body_id);
+    let body_sim = get_body_sim(world, body_index);
+    add(body_sim.max_extent, abs(body_sim.local_center))
 }

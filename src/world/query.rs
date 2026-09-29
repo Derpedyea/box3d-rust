@@ -178,6 +178,7 @@ pub fn world_overlap_shape(
 /// `(shape_id, point, normal, fraction, user_material_id, triangle_index, child_index)`
 /// and controls continuation like C's b3CastResultFcn: return -1 to ignore,
 /// 0 to terminate, a fraction in 0..=1 to clip, or >1 to continue without clipping.
+/// Ignores back-side collision on meshes and height-fields.
 /// (b3World_CastRay + static RayCastCallback)
 pub fn world_cast_ray(
     world: &World,
@@ -322,7 +323,8 @@ fn cast_ray_impl(
 }
 
 /// Cast a ray into the world to collect the closest hit. Ignores initial
-/// overlap (fraction == 0 returns -1). (b3World_CastRayClosest)
+/// overlap (fraction == 0 returns -1). Ignores back-side collision on meshes and height-fields.
+/// (b3World_CastRayClosest)
 pub fn world_cast_ray_closest(
     world: &World,
     origin: Pos,
@@ -385,6 +387,7 @@ pub fn world_cast_ray_closest(
 }
 
 /// Cast a shape through the world. Callback contract matches [`world_cast_ray`].
+/// Ignores back-side collision on meshes and height-fields.
 /// (b3World_CastShape + static ShapeCastCallback)
 pub fn world_cast_shape(
     world: &World,
@@ -527,6 +530,7 @@ pub fn world_cast_shape(
 
 /// Collide a capsule mover with the world, gathering collision planes via callback.
 /// The callback receives `(shape_id, planes)` and returns `false` to stop.
+/// Ignores back-side collision on meshes and height-fields.
 /// (b3World_CollideMover + static TreeCollideCallback)
 pub fn world_collide_mover(
     world: &World,
@@ -607,7 +611,8 @@ pub fn world_collide_mover(
 
 /// Cast a capsule mover through the world. Returns the earliest hit fraction in
 /// `[0, 1]`. Overlapping shapes (fraction == 0) are ignored. An optional filter
-/// callback can reject individual shapes. (b3World_CastMover + static MoverCastCallback)
+/// callback can reject individual shapes. Ignores back-side collision on meshes and height-fields.
+/// (b3World_CastMover + static MoverCastCallback)
 pub fn world_cast_mover(
     world: &World,
     origin: Pos,

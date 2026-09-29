@@ -24,7 +24,7 @@ use crate::hull::{
     shape_cast_hull,
 };
 use crate::math_functions::{
-    cross, inv_rotate_vector, inv_transform_point, length, min_int, rotate_vector, sub,
+    clamp_int, cross, inv_rotate_vector, inv_transform_point, length, min_int, rotate_vector, sub,
     transform_point, Transform, Vec3, PI,
 };
 use crate::mesh::{collide_mover_and_mesh, overlap_mesh, ray_cast_mesh, shape_cast_mesh, Mesh};
@@ -168,6 +168,11 @@ pub fn collide_mover(
         planes[i as usize].plane.normal =
             rotate_vector(transform.q, planes[i as usize].plane.normal);
         planes[i as usize].point = transform_point(transform, planes[i as usize].point);
+        planes[i as usize].material_index = clamp_int(
+            planes[i as usize].material_index,
+            0,
+            shape.material_count() - 1,
+        );
     }
 
     plane_count

@@ -294,3 +294,27 @@ impl Default for BodyCastResult {
         }
     }
 }
+
+/// Body time of impact result for movers. (b3BodyTOIResult)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BodyToiResult {
+    /// The hit point in world space.
+    pub point: crate::math_functions::Pos,
+    /// The hit normal. Points from the body to the mover.
+    pub normal: crate::math_functions::Vec3,
+    /// The sweep time of the collision.
+    pub fraction: f32,
+    /// The hit shape.
+    pub shape_id: crate::id::ShapeId,
+}
+
+impl Default for BodyToiResult {
+    fn default() -> Self {
+        BodyToiResult {
+            point: crate::math_functions::POS_ZERO,
+            normal: crate::math_functions::VEC3_ZERO,
+            fraction: 0.0,
+            shape_id: crate::id::NULL_SHAPE_ID,
+        }
+    }
+}

@@ -8,11 +8,16 @@ use crate::body::{
     body_get_world_inverse_rotational_inertia, body_is_valid, body_set_angular_velocity,
     body_set_linear_velocity, body_set_mass_data, body_sim, create_body, destroy_body,
 };
-use crate::geometry::{MassData, Sphere};
+use crate::body::{body_get_max_extent, body_get_max_extent_origin, body_get_min_extent};
+use crate::geometry::{Capsule, MassData, Sphere};
+use crate::hull::make_cube_hull;
 use crate::math_functions::{
     make_quat_from_axis_angle, Matrix3, Pos, Vec3, MAT3_ZERO, PI, VEC3_AXIS_Z, VEC3_ZERO,
 };
-use crate::shape::create_sphere_shape;
+use crate::mesh::{create_mesh, destroy_mesh, MeshDef};
+use crate::shape::{
+    create_capsule_shape, create_hull_shape, create_mesh_shape, create_sphere_shape,
+};
 use crate::solver_set::{AWAKE_SET, STATIC_SET};
 use crate::types::{default_body_def, default_shape_def, default_world_def, BodyType};
 use crate::world::World;
@@ -507,4 +512,119 @@ fn damping_gravity_and_sleep_threshold() {
     assert_eq!(body_get_angular_damping(&world, body_id), 0.5);
     assert_eq!(body_get_gravity_scale(&world, body_id), 2.0);
     assert_eq!(body_get_sleep_threshold(&world, body_id), 0.1);
+}
+
+fn ensure_small(value: f32, tolerance: f32) {
+    assert!(
+        !(value < -tolerance || tolerance < value),
+        "|{value}| > tolerance {tolerance}"
+    );
+}
+
+// Extents bound the shapes about the center of mass, per axis. An offset shape must count its
+// offset, not just its own size.
+#[test]
+fn shape_extents() {
+    let mut world = World::new(&default_world_def());
+
+    let mut shape_def = default_shape_def();
+    shape_def.density = 1.0;
+
+    // Kinematic bodies measure from the body origin
+    let mut body_def = default_body_def();
+    body_def.type_ = BodyType::Kinematic;
+
+    let capsule_id = create_body(&mut world, &body_def);
+    let capsule = Capsule {
+        center1: Vec3::new(-2.0, 0.0, 0.0),
+        center2: Vec3::new(-1.0, 0.0, 0.0),
+        radius: 0.2,
+    };
+    create_capsule_shape(&mut world, capsule_id, &shape_def, &capsule);
+
+    let max_extent = body_get_max_extent(&world, capsule_id);
+    ensure_small(max_extent.x - 2.2, 1e-5);
+    ensure_small(max_extent.y - 0.2, 1e-5);
+    ensure_small(max_extent.z - 0.2, 1e-5);
+    ensure_small(body_get_min_extent(&world, capsule_id) - 0.2, 1e-5);
+
+    let sphere_id = create_body(&mut world, &body_def);
+    let sphere = Sphere {
+        center: Vec3::new(1.0, 2.0, 3.0),
+        radius: 0.5,
+    };
+    create_sphere_shape(&mut world, sphere_id, &shape_def, &sphere);
+
+    let max_extent = body_get_max_extent(&world, sphere_id);
+    ensure_small(max_extent.x - 1.5, 1e-5);
+    ensure_small(max_extent.y - 2.5, 1e-5);
+    ensure_small(max_extent.z - 3.5, 1e-5);
+    ensure_small(body_get_min_extent(&world, sphere_id) - 0.5, 1e-5);
+
+    // Dynamic bodies measure from the center of mass. A light sphere hung off a cube pulls the
+    // center toward it, so the far side of the sphere is the widest point.
+    body_def.type_ = BodyType::Dynamic;
+    let cube_id = create_body(&mut world, &body_def);
+    let cube = make_cube_hull(0.5);
+    create_hull_shape(&mut world, cube_id, &shape_def, &cube.base);
+    let offset_sphere = Sphere {
+        center: Vec3::new(1.0, 0.0, 0.0),
+        radius: 0.2,
+    };
+    create_sphere_shape(&mut world, cube_id, &shape_def, &offset_sphere);
+
+    let local_center = body_get_local_center(&world, cube_id);
+    assert!(0.0 < local_center.x && local_center.x < 0.5);
+
+    let max_extent = body_get_max_extent(&world, cube_id);
+    ensure_small(max_extent.x - (1.2 - local_center.x), 1e-5);
+    ensure_small(max_extent.y - 0.5, 1e-5);
+    ensure_small(max_extent.z - 0.5, 1e-5);
+    ensure_small(body_get_min_extent(&world, cube_id) - 0.2, 1e-5);
+
+    let origin_extent = body_get_max_extent_origin(&world, cube_id);
+    ensure_small(origin_extent.x - 1.2, 1e-5);
+    ensure_small(origin_extent.y - 0.5, 1e-5);
+    ensure_small(origin_extent.z - 0.5, 1e-5);
+
+    // A mesh has no mass, so the sphere alone places the center at x = 1 and the far edge of the
+    // mesh at x = -3 is four units out.
+    let vertices = vec![
+        Vec3::new(-3.0, 0.0, -1.0),
+        Vec3::new(-2.0, 0.0, 1.0),
+        Vec3::new(-1.0, 0.0, -1.0),
+        Vec3::new(1.0, 0.0, -1.0),
+        Vec3::new(2.0, 0.0, 1.0),
+        Vec3::new(3.0, 0.0, -1.0),
+    ];
+    let indices = vec![0, 1, 2, 3, 4, 5];
+    let mesh_def = MeshDef {
+        vertices,
+        stride: core::mem::size_of::<Vec3>(),
+        indices,
+        ..Default::default()
+    };
+    let mesh = create_mesh(&mesh_def, None).expect("mesh");
+
+    let mesh_id = create_body(&mut world, &body_def);
+    create_sphere_shape(&mut world, mesh_id, &shape_def, &offset_sphere);
+    create_mesh_shape(
+        &mut world,
+        mesh_id,
+        &shape_def,
+        &mesh,
+        Vec3::new(1.0, 1.0, 1.0),
+    );
+
+    let local_center = body_get_local_center(&world, mesh_id);
+    ensure_small(local_center.x - 1.0, 1e-5);
+
+    let max_extent = body_get_max_extent(&world, mesh_id);
+    ensure_small(max_extent.x - 4.0, 1e-4);
+    ensure_small(max_extent.y - 0.2, 1e-4);
+    ensure_small(max_extent.z - 1.0, 1e-4);
+    ensure_small(body_get_min_extent(&world, mesh_id) - 0.2, 1e-5);
+
+    drop(world);
+    destroy_mesh(mesh);
 }

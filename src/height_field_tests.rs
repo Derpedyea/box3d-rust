@@ -1,4 +1,4 @@
-//! Port of box3d-cpp-reference/test/test_height_field.c (all 9 subtests).
+//! Port of box3d-cpp-reference/test/test_height_field.c (all 13 subtests).
 //!
 //! SPDX-FileCopyrightText: 2026 Erin Catto
 //! SPDX-License-Identifier: MIT
@@ -515,5 +515,145 @@ fn ray_cast_brute_force() {
     }
 
     assert_eq!(failures, 0);
+    destroy_height_field(hf);
+}
+
+// Flat 3x3 vertex field at y = 0, one cell material per entry. Caller destroys.
+fn make_flat_field(materials: &[u8; 4], clockwise: bool) -> HeightFieldData {
+    let heights = [0.0f32; 9];
+
+    let def = HeightFieldDef {
+        heights: heights.to_vec(),
+        material_indices: materials.to_vec(),
+        scale: v(1.0, 1.0, 1.0),
+        count_x: 3,
+        count_z: 3,
+        global_minimum_height: -1.0,
+        global_maximum_height: 1.0,
+        clockwise_winding: clockwise,
+    };
+
+    create_height_field(&def)
+}
+
+fn sphere_cast_input(center: Vec3, translation: Vec3) -> ShapeCastInput {
+    ShapeCastInput {
+        proxy: make_proxy(&[center], 0.2),
+        translation,
+        max_fraction: 1.0,
+        can_encroach: false,
+    }
+}
+
+#[test]
+fn shape_cast_backside() {
+    let materials = [1u8, 0, 0, 0];
+    let hf = make_flat_field(&materials, false);
+
+    // Falling onto the front (upper) face reports the hit, the triangle, and its material.
+    // The surface sits at y = 0, so a sphere of radius 0.2 stops with its center at y = 0.2.
+    let down = sphere_cast_input(v(0.3, 5.0, 0.25), v(0.0, -10.0, 0.0));
+
+    let out = shape_cast_height_field(&hf, &down);
+    assert!(out.hit);
+    ensure_small(out.fraction - 0.48, 1e-2);
+    assert!(out.normal.y > 0.99);
+    assert!(out.triangle_index == 0 || out.triangle_index == 1);
+    assert_eq!(out.material_index, 1);
+
+    // Rising from behind the face is culled
+    let up = sphere_cast_input(v(0.3, -5.0, 0.25), v(0.0, 10.0, 0.0));
+
+    let missed = shape_cast_height_field(&hf, &up);
+    assert!(!missed.hit);
+
+    destroy_height_field(hf);
+}
+
+// A clockwise height field faces down, see HeightFieldWinding. Shape cast backside
+// culling must respect the flag: a rising sphere hits from below, not from above.
+#[test]
+fn shape_cast_clockwise_winding() {
+    let materials = [1u8, 0, 0, 0];
+    let hf = make_flat_field(&materials, true);
+
+    let up = sphere_cast_input(v(0.3, -5.0, 0.25), v(0.0, 10.0, 0.0));
+
+    let out = shape_cast_height_field(&hf, &up);
+    assert!(out.hit);
+    ensure_small(out.fraction - 0.48, 1e-2);
+    assert!(out.normal.y < -0.99);
+    assert!(out.triangle_index == 0 || out.triangle_index == 1);
+    assert_eq!(out.material_index, 1);
+
+    let down = sphere_cast_input(v(0.3, 5.0, 0.25), v(0.0, -10.0, 0.0));
+
+    let missed = shape_cast_height_field(&hf, &down);
+    assert!(!missed.hit);
+
+    destroy_height_field(hf);
+}
+
+// Ray casts run through the shape cast. The default winding faces up, so a ray from below is the
+// back side and gets culled.
+#[test]
+fn ray_cast_backside() {
+    let materials = [1u8, 0, 0, 0];
+    let hf = make_flat_field(&materials, false);
+
+    let down = RayCastInput {
+        origin: v(0.3, 5.0, 0.25),
+        translation: v(0.0, -10.0, 0.0),
+        max_fraction: 1.0,
+    };
+
+    let out = ray_cast_height_field(&hf, &down);
+    assert!(out.hit);
+    ensure_small(out.fraction - 0.5, 1e-3);
+    assert!(out.normal.y > 0.99);
+    assert!(out.triangle_index == 0 || out.triangle_index == 1);
+    assert_eq!(out.material_index, 1);
+
+    let up = RayCastInput {
+        origin: v(0.3, -5.0, 0.25),
+        translation: v(0.0, 10.0, 0.0),
+        max_fraction: 1.0,
+    };
+
+    let missed = ray_cast_height_field(&hf, &up);
+    assert!(!missed.hit);
+
+    destroy_height_field(hf);
+}
+
+// A clockwise field faces down. The winding swap already flips the triangle, so the ray normal
+// must not be flipped a second time.
+#[test]
+fn ray_cast_clockwise_winding() {
+    let materials = [1u8, 0, 0, 0];
+    let hf = make_flat_field(&materials, true);
+
+    let up = RayCastInput {
+        origin: v(0.3, -5.0, 0.25),
+        translation: v(0.0, 10.0, 0.0),
+        max_fraction: 1.0,
+    };
+
+    let out = ray_cast_height_field(&hf, &up);
+    assert!(out.hit);
+    ensure_small(out.fraction - 0.5, 1e-3);
+    assert!(out.normal.y < -0.99);
+    assert!(out.triangle_index == 0 || out.triangle_index == 1);
+    assert_eq!(out.material_index, 1);
+
+    let down = RayCastInput {
+        origin: v(0.3, 5.0, 0.25),
+        translation: v(0.0, -10.0, 0.0),
+        max_fraction: 1.0,
+    };
+
+    let missed = ray_cast_height_field(&hf, &down);
+    assert!(!missed.hit);
+
     destroy_height_field(hf);
 }

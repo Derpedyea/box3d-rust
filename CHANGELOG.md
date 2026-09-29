@@ -7,7 +7,10 @@ semantic versioning (0.x: minor-compatible additive changes bump the patch numbe
 
 Upstream sync: the C reference pin advances to `30c67b5` (upstream v0.2.0:
 64-bit rapidhash geometry hashes and triangle manifold collision fixes), and
-this port follows its API and behavior.
+this port follows its API and behavior. The sync is now advancing toward
+upstream `9f998c8`, one upstream commit at a time. Ported so far:
+
+- `47d7f7c` clockwise option, joint is awake (#130)
 
 ### Breaking
 
@@ -36,9 +39,38 @@ this port follows its API and behavior.
   `Option<Box<RefCell<Recording>>>`.
 - Shared hull geometry is now `Arc<HullData>` instead of `Rc<HullData>`
   (`ShapeGeometry::Hull`, the world hull database).
+- Recording format major version advances to 5 (upstream `47d7f7c`): recorded
+  mover planes carry the new `PlaneResult` triangle, child, and material
+  indices. Recordings from major version 4 no longer replay.
+- `PlaneResult` gains `triangle_index`, `child_index`, and `material_index`,
+  and `MeshDef` gains `stride`, `vertex_bytes`, and `clock_wise_winding`
+  (upstream `47d7f7c`). Struct literals without `..Default::default()` must
+  add the new fields.
+- `get_length_and_normalize` now treats vectors with squared length at or
+  below `1000 * f32::MIN_POSITIVE` as zero (was length below `f32::EPSILON`)
+  and writes a zero length on failure, matching upstream.
 
 ### Changed
 
+- Mover collision against meshes and height fields is one sided (upstream
+  `47d7f7c`): `collide_mover_and_mesh` / `collide_mover_and_height_field`
+  skip triangles whose back faces the mover center, respecting mirrored mesh
+  scale and clockwise height fields. Mesh and height-field shape casts cull
+  back-facing triangles the same way.
+- Mover planes report the mesh or height-field triangle and its material.
+  Compound movers report the child index and remap the child material through
+  the compound material table; `collide_mover` clamps the material index to
+  the shape's material count.
+- `shape_distance` fills `normal`, `distance`, `iterations`, and
+  `simplex_count` on its overlap early outs, builds witness points before the
+  normal check, and only writes the simplex cache on success.
+- `time_of_impact` reports an averaged hit point and normal when the shapes
+  start overlapped.
+- Height-field casts swap the clockwise cell corners once up front, as
+  upstream now does, instead of choosing vertices and normals per triangle.
+  Clockwise ray-cast triangles are geometrically unchanged; the second
+  triangle's normal is computed from different edges, so it may differ in the
+  last bits.
 - `World` is now `Send`, so a world can be built on one thread and moved to
   another (#1).
 - Simplified face-vs-edge contact selection in the hull-capsule and
@@ -46,6 +78,12 @@ this port follows its API and behavior.
 
 ### Fixed
 
+- Body extents (upstream `47d7f7c`): capsule and sphere `max_extent` now
+  bound the shape about the center of mass on every axis (the capsule used a
+  signed max, the sphere subtracted the local center twice), and mesh extents
+  measure from the local center instead of the body origin.
+- Compound creation caps each mesh child at `MAX_COMPOUND_MESH_MATERIALS`
+  materials instead of indexing past the child material table.
 - Replayed-mesh material-index deserialization read the wrong element count
   (one index per triangle is correct); replayed mesh contacts previously
   panicked.
@@ -80,6 +118,18 @@ this port follows its API and behavior.
 
 ### Added
 
+- Upstream `47d7f7c` API: `body_time_of_impact_mover` with `BodyToiResult`
+  (b3Body_TimeOfImpactMover), `body_get_min_extent`, `body_get_max_extent`,
+  `body_get_max_extent_origin`, and `joint_is_awake`.
+- Mesh creation reads interleaved vertex buffers (`MeshDef::vertex_bytes`
+  read through `MeshDef::stride`) and accepts clockwise input
+  (`MeshDef::clock_wise_winding`). The stride applies only to
+  `vertex_bytes`; contiguous `vertices` require a stride of 0 or 12. Like C,
+  a non-zero stride below 12 bytes, above 4096, or not a multiple of 4 is
+  rejected.
+- Ported upstream tests: `test_mesh.c` (7), body `ShapeExtents`, body query
+  `MoverTOI*` (11), height-field backside and clockwise casts (4), and mover
+  material / one sided collision (10).
 - `world::destroy_world(world: World) -> Option<Recording>` (b3DestroyWorld):
   consumes the world, finalizes and returns any active recording, then
   releases every live shape's allocations (hull-database references and

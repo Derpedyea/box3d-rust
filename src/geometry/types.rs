@@ -86,6 +86,12 @@ pub struct PlaneResult {
     pub plane: Plane,
     /// Closest point on the shape. May not be unique.
     pub point: Vec3,
+    /// The index of the mesh or height field triangle hit.
+    pub triangle_index: i32,
+    /// The index of the compound child shape.
+    pub child_index: i32,
+    /// The material index.
+    pub material_index: i32,
 }
 
 impl Default for PlaneResult {
@@ -96,6 +102,9 @@ impl Default for PlaneResult {
                 offset: 0.0,
             },
             point: VEC3_ZERO,
+            triangle_index: 0,
+            child_index: 0,
+            material_index: 0,
         }
     }
 }

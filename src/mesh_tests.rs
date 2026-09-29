@@ -1,4 +1,6 @@
-//! Authored tests for mesh pure geometry (no upstream test_mesh.c).
+//! Authored tests for mesh pure geometry, plus the port of
+//! box3d-cpp-reference/test/test_mesh.c (stride, clockwise winding, welding,
+//! and the built in creators) at the end of the file.
 //!
 //! Covers create/AABB/ray/overlap for box and grid meshes, plus BVH vs brute ray.
 //!
@@ -9,12 +11,14 @@ use crate::core::NULL_INDEX;
 use crate::distance::{make_proxy, CastOutput};
 use crate::geometry::RayCastInput;
 use crate::math_functions::{
-    cross, intersect_ray_triangle, mul, normalize, sub, Vec3, TRANSFORM_IDENTITY, VEC3_ONE,
-    VEC3_ZERO,
+    cross, distance_squared, intersect_ray_triangle, is_sane_aabb, mul, normalize, sub, Vec3,
+    TRANSFORM_IDENTITY, VEC3_ONE, VEC3_ZERO,
 };
 use crate::mesh::{
-    compute_mesh_aabb, create_box_mesh, create_grid_mesh, create_mesh, destroy_mesh, get_height,
-    get_mesh_triangle, is_valid_mesh, overlap_mesh, ray_cast_mesh, Mesh, MeshDef, MESH_VERSION,
+    compute_mesh_aabb, create_box_mesh, create_grid_mesh, create_hollow_box_mesh, create_mesh,
+    create_platform_mesh, create_torus_mesh, create_wave_mesh, destroy_mesh, get_height,
+    get_mesh_flags, get_mesh_triangle, get_mesh_triangles, get_mesh_vertices, is_valid_mesh,
+    overlap_mesh, ray_cast_mesh, Mesh, MeshData, MeshDef, ALL_CONCAVE_EDGES, MESH_VERSION,
 };
 
 fn v(x: f32, y: f32, z: f32) -> Vec3 {
@@ -259,4 +263,331 @@ fn mesh_negative_scale_winding() {
     assert_eq!(t.i2, stored.index3);
     assert_eq!(t.i3, stored.index2);
     destroy_mesh(mesh);
+}
+
+// Port of test_mesh.c ----------------------------------------------------------------------
+
+// Two quads meeting at a concave crease along the shared edge 1-4. The crease exercises
+// edge identification, which reads the baked winding rather than the input winding.
+const VALLEY_VERTEX_COUNT: usize = 6;
+const VALLEY_TRIANGLE_COUNT: usize = 4;
+
+fn make_valley() -> (Vec<Vec3>, Vec<i32>) {
+    let vertices = vec![
+        v(-1.0, 1.0, -1.0),
+        v(0.0, 0.0, -1.0),
+        v(1.0, 1.0, -1.0),
+        v(-1.0, 1.0, 1.0),
+        v(0.0, 0.0, 1.0),
+        v(1.0, 1.0, 1.0),
+    ];
+
+    #[rustfmt::skip]
+    let indices = vec![
+        0, 3, 1, // left quad
+        3, 4, 1,
+        1, 4, 2, // right quad
+        4, 5, 2,
+    ];
+
+    (vertices, indices)
+}
+
+// A vertex laid out the way a renderer would hand it over. The position sits off the
+// front of the struct so a non-zero base offset gets exercised too.
+//
+// C: struct FatVertex { float weight; b3Vec3 position; float uv[2]; }. The bytes are
+// written field by field so the layout (24 bytes, position at byte 4) does not depend
+// on Rust struct layout.
+const FAT_VERTEX_SIZE: usize = 24;
+const FAT_POSITION_OFFSET: usize = 4;
+
+fn make_fat_vertices(vertices: &[Vec3]) -> Vec<u8> {
+    let mut fat = Vec::with_capacity(FAT_VERTEX_SIZE * vertices.len());
+    for (i, vertex) in vertices.iter().enumerate() {
+        // Poison the padding so a stride mistake bakes obvious garbage instead of near misses
+        let weight = 1000.0f32 + i as f32;
+        fat.extend_from_slice(&weight.to_ne_bytes());
+        fat.extend_from_slice(&vertex.x.to_ne_bytes());
+        fat.extend_from_slice(&vertex.y.to_ne_bytes());
+        fat.extend_from_slice(&vertex.z.to_ne_bytes());
+        fat.extend_from_slice(&(-1000.0f32).to_ne_bytes());
+        fat.extend_from_slice(&(-2000.0f32).to_ne_bytes());
+    }
+    fat
+}
+
+// The Rust stand-in for pointing at the first fat position: the bytes starting there.
+fn fat_position_bytes(fat: &[u8]) -> Vec<u8> {
+    fat[FAT_POSITION_OFFSET..].to_vec()
+}
+
+fn reverse_winding(indices: &mut [i32], triangle_count: usize) {
+    for i in 0..triangle_count {
+        indices.swap(3 * i + 1, 3 * i + 2);
+    }
+}
+
+// The hash covers every byte of the mesh block, so this compares the tree, the vertices,
+// the baked triangles and the edge flags in one shot.
+fn meshes_match(mesh1: &MeshData, mesh2: &MeshData) -> bool {
+    mesh1.byte_count == mesh2.byte_count && mesh1.hash == mesh2.hash
+}
+
+fn vertices_match(mesh: &MeshData, expected: &[Vec3], count: usize) -> bool {
+    if mesh.vertex_count as usize != count {
+        return false;
+    }
+
+    let vertices = get_mesh_vertices(mesh);
+    for i in 0..count {
+        if distance_squared(vertices[i], expected[i]) > f32::EPSILON {
+            return false;
+        }
+    }
+
+    true
+}
+
+// The valley faces up, so every baked triangle should wind counter clockwise about +Y
+fn faces_up(mesh: &MeshData) -> bool {
+    let vertices = get_mesh_vertices(mesh);
+    let triangles = get_mesh_triangles(mesh);
+
+    for i in 0..mesh.triangle_count as usize {
+        let v1 = vertices[triangles[i].index1 as usize];
+        let v2 = vertices[triangles[i].index2 as usize];
+        let v3 = vertices[triangles[i].index3 as usize];
+
+        let normal = cross(sub(v2, v1), sub(v3, v1));
+        if normal.y <= 0.0 {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn has_concave_edge(mesh: &MeshData) -> bool {
+    let flags = get_mesh_flags(mesh);
+
+    for i in 0..mesh.triangle_count as usize {
+        if (flags[i] as i32 & ALL_CONCAVE_EDGES) != 0 {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn make_valley_def(vertices: &[Vec3], indices: &[i32]) -> MeshDef {
+    MeshDef {
+        vertices: vertices.to_vec(),
+        stride: core::mem::size_of::<Vec3>(),
+        indices: indices.to_vec(),
+        identify_edges: true,
+        ..Default::default()
+    }
+}
+
+// A def reading positions out of fat vertices, like C's MakeValleyDef( &fat[0].position, ... )
+// with stride = sizeof( FatVertex ).
+fn make_fat_valley_def(fat: &[u8], indices: &[i32]) -> MeshDef {
+    MeshDef {
+        vertex_bytes: fat_position_bytes(fat),
+        stride: FAT_VERTEX_SIZE,
+        indices: indices.to_vec(),
+        identify_edges: true,
+        ..Default::default()
+    }
+}
+
+// Dense input is the reference the other cases are measured against
+#[test]
+fn mesh_dense_stride() {
+    let (vertices, indices) = make_valley();
+
+    let def = make_valley_def(&vertices, &indices);
+    let mesh = create_mesh(&def, None).expect("mesh");
+
+    assert_eq!(mesh.vertex_count as usize, VALLEY_VERTEX_COUNT);
+    assert_eq!(mesh.triangle_count as usize, VALLEY_TRIANGLE_COUNT);
+    assert_eq!(mesh.degenerate_count, 0);
+    assert!(vertices_match(&mesh, &vertices, VALLEY_VERTEX_COUNT));
+    assert!(faces_up(&mesh));
+    assert!(has_concave_edge(&mesh));
+
+    destroy_mesh(mesh);
+}
+
+// Interleaved input must bake to exactly the same mesh as dense input
+#[test]
+fn mesh_fat_stride() {
+    let (vertices, indices) = make_valley();
+
+    let dense_def = make_valley_def(&vertices, &indices);
+    let dense_mesh = create_mesh(&dense_def, None).expect("dense mesh");
+
+    let fat = make_fat_vertices(&vertices);
+
+    let fat_def = make_fat_valley_def(&fat, &indices);
+    let fat_mesh = create_mesh(&fat_def, None).expect("fat mesh");
+
+    assert!(vertices_match(&fat_mesh, &vertices, VALLEY_VERTEX_COUNT));
+    assert!(faces_up(&fat_mesh));
+    assert!(meshes_match(&dense_mesh, &fat_mesh));
+
+    destroy_mesh(fat_mesh);
+    destroy_mesh(dense_mesh);
+}
+
+// Welding reads the source vertices through the stride as well
+#[test]
+fn mesh_stride_weld() {
+    let (vertices, indices) = make_valley();
+
+    // Split the crease so each quad owns a copy of the shared edge
+    let mut split_vertices = vertices.clone();
+    split_vertices.push(vertices[1]);
+    split_vertices.push(vertices[4]);
+    assert_eq!(split_vertices.len(), 8);
+
+    // Point the right quad at the copies
+    let mut split_indices = indices.clone();
+    split_indices[6] = 6;
+    split_indices[7] = 7;
+    split_indices[9] = 7;
+
+    let fat = make_fat_vertices(&split_vertices);
+
+    let mut def = make_fat_valley_def(&fat, &split_indices);
+    def.weld_vertices = true;
+    def.weld_tolerance = 0.01;
+
+    let mesh = create_mesh(&def, None).expect("mesh");
+
+    assert_eq!(mesh.vertex_count as usize, VALLEY_VERTEX_COUNT);
+    assert_eq!(mesh.triangle_count as usize, VALLEY_TRIANGLE_COUNT);
+    assert!(vertices_match(&mesh, &vertices, VALLEY_VERTEX_COUNT));
+    assert!(faces_up(&mesh));
+    assert!(has_concave_edge(&mesh));
+
+    destroy_mesh(mesh);
+}
+
+// Clockwise input plus the flag must bake to the same mesh as counter clockwise input
+#[test]
+fn mesh_clock_wise() {
+    let (vertices, indices) = make_valley();
+
+    let ccw_def = make_valley_def(&vertices, &indices);
+    let ccw_mesh = create_mesh(&ccw_def, None).expect("ccw mesh");
+
+    let mut reversed = indices.clone();
+    reverse_winding(&mut reversed, VALLEY_TRIANGLE_COUNT);
+
+    let mut cw_def = make_valley_def(&vertices, &reversed);
+    cw_def.clock_wise_winding = true;
+    let cw_mesh = create_mesh(&cw_def, None).expect("cw mesh");
+
+    assert!(faces_up(&cw_mesh));
+    assert!(has_concave_edge(&cw_mesh));
+    assert!(meshes_match(&ccw_mesh, &cw_mesh));
+
+    destroy_mesh(cw_mesh);
+    destroy_mesh(ccw_mesh);
+}
+
+// Without the flag the same clockwise input must bake inside out
+#[test]
+fn mesh_clock_wise_ignored() {
+    let (vertices, mut indices) = make_valley();
+    reverse_winding(&mut indices, VALLEY_TRIANGLE_COUNT);
+
+    let def = make_valley_def(&vertices, &indices);
+    let mesh = create_mesh(&def, None).expect("mesh");
+
+    assert!(!faces_up(&mesh));
+
+    destroy_mesh(mesh);
+}
+
+// Winding, stride and welding have to compose
+#[test]
+fn mesh_clock_wise_stride_weld() {
+    let (vertices, indices) = make_valley();
+
+    let mut ccw_def = make_valley_def(&vertices, &indices);
+    ccw_def.weld_vertices = true;
+    ccw_def.weld_tolerance = 0.01;
+    let ccw_mesh = create_mesh(&ccw_def, None).expect("ccw mesh");
+
+    let mut reversed = indices.clone();
+    reverse_winding(&mut reversed, VALLEY_TRIANGLE_COUNT);
+
+    let fat = make_fat_vertices(&vertices);
+
+    let mut cw_def = make_fat_valley_def(&fat, &reversed);
+    cw_def.clock_wise_winding = true;
+    cw_def.weld_vertices = true;
+    cw_def.weld_tolerance = 0.01;
+    let cw_mesh = create_mesh(&cw_def, None).expect("cw mesh");
+
+    assert!(faces_up(&cw_mesh));
+    assert!(meshes_match(&ccw_mesh, &cw_mesh));
+
+    destroy_mesh(cw_mesh);
+    destroy_mesh(ccw_mesh);
+}
+
+// The built in creators fill their own def, so a missed stride shows up here
+#[test]
+fn mesh_creators() {
+    let center = v(1.0, 2.0, 3.0);
+    let extent = v(0.5, 1.0, 1.5);
+
+    let meshes = [
+        create_grid_mesh(4, 4, 1.0, 2, true),
+        create_wave_mesh(4, 4, 1.0, 0.5, 1.0, 1.0),
+        create_torus_mesh(8, 6, 2.0, 0.5),
+        create_box_mesh(center, extent, true),
+        create_hollow_box_mesh(center, extent),
+        create_platform_mesh(center, 2.0, 1.0, 2.0),
+    ];
+
+    for mesh in meshes {
+        let mesh = mesh.expect("creator mesh");
+        assert!(mesh.vertex_count >= 3);
+        assert!(mesh.triangle_count >= 1);
+        assert!(is_sane_aabb(mesh.bounds));
+
+        destroy_mesh(mesh);
+    }
+}
+
+// Stride validation (C rejects bad strides with NULL). The Rust port applies the stride only
+// to `vertex_bytes`, so contiguous `vertices` with any stride other than 0 or 12 are rejected.
+#[test]
+fn mesh_stride_rejection() {
+    let (vertices, indices) = make_valley();
+    let fat = make_fat_vertices(&vertices);
+
+    // Bad strides: too small, too large, not 4 aligned
+    for stride in [8usize, 4100, 26] {
+        let mut def = make_fat_valley_def(&fat, &indices);
+        def.stride = stride;
+        assert!(create_mesh(&def, None).is_none(), "stride {stride}");
+    }
+
+    // Non-12 stride with contiguous vertices and empty vertex_bytes
+    let mut def = make_valley_def(&vertices, &indices);
+    def.stride = FAT_VERTEX_SIZE;
+    assert!(create_mesh(&def, None).is_none());
+
+    // Stride 0 and 12 are both accepted for contiguous vertices
+    for stride in [0usize, core::mem::size_of::<Vec3>()] {
+        let mut def = make_valley_def(&vertices, &indices);
+        def.stride = stride;
+        assert!(create_mesh(&def, None).is_some(), "stride {stride}");
+    }
 }

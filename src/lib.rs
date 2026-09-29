@@ -165,6 +165,9 @@ mod body_api_tests;
 mod body_query_tests;
 
 #[cfg(test)]
+mod body_query_mover_toi_tests;
+
+#[cfg(test)]
 mod broad_phase_tests;
 
 #[cfg(test)]
@@ -214,6 +217,9 @@ mod mesh_tests;
 
 #[cfg(test)]
 mod mover_tests;
+
+#[cfg(test)]
+mod mover_material_tests;
 
 #[cfg(test)]
 mod name_cache_tests;

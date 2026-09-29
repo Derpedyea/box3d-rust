@@ -12,8 +12,8 @@ use crate::distance::{
 };
 use crate::geometry::{Capsule, PlaneResult};
 use crate::math_functions::{
-    aabb_overlaps, add, max, min, mul_sv, sub, test_bounds_triangle_overlap, Aabb, Plane,
-    Transform, Vec3, TRANSFORM_IDENTITY,
+    aabb_overlaps, add, lerp, max, min, mul_sv, signed_volume, sub, test_bounds_triangle_overlap,
+    Aabb, Plane, Transform, Vec3, TRANSFORM_IDENTITY,
 };
 
 /// Test overlap between a height field and a shape proxy. (b3OverlapHeightField)
@@ -176,6 +176,7 @@ pub fn collide_mover_and_height_field(
     let mut cache = SimplexCache::default();
 
     let radius = mover.radius;
+    let center = lerp(mover.center1, mover.center2, 0.5);
     let r = Vec3 {
         x: radius,
         y: radius,
@@ -191,6 +192,8 @@ pub fn collide_mover_and_height_field(
     let max_row = (bounds_max.z / scale.z).floor() as i32;
     let min_col = (bounds_min.x / scale.x).floor() as i32;
     let max_col = (bounds_max.x / scale.x).floor() as i32;
+
+    let clock_wise = shape.clockwise;
 
     let mut plane_count = 0i32;
 
@@ -212,60 +215,100 @@ pub fn collide_mover_and_height_field(
 
             let corners = get_height_field_cell_corners(shape, row, column);
             let point11 = corners[0];
-            let point12 = corners[1];
-            let point21 = corners[2];
+            let mut point12 = corners[1];
+            let mut point21 = corners[2];
             let point22 = corners[3];
 
-            if test_bounds_triangle_overlap(bounds_center, bounds_extent, point11, point21, point12)
-            {
-                let triangle_vertices = [point11, point21, point12];
-                distance_input.proxy_a = make_proxy(&triangle_vertices, 0.0);
-                cache.count = 0;
+            if clock_wise {
+                core::mem::swap(&mut point12, &mut point21);
+            }
 
-                let distance_output = shape_distance(&distance_input, &mut cache, None);
+            let overlap1 = test_bounds_triangle_overlap(
+                bounds_center,
+                bounds_extent,
+                point11,
+                point21,
+                point12,
+            );
+            if overlap1 {
+                let signed_volume = signed_volume(point11, point21, point12, center);
 
-                if distance_output.distance == 0.0 {
-                    // todo SAT
-                } else if distance_output.distance <= mover.radius {
-                    let plane = Plane {
-                        normal: distance_output.normal,
-                        offset: mover.radius - distance_output.distance,
-                    };
-                    planes[plane_count as usize] = PlaneResult {
-                        plane,
-                        point: distance_output.point_a,
-                    };
-                    plane_count += 1;
+                // Front side?
+                if signed_volume >= 0.0 {
+                    let triangle_vertices = [point11, point21, point12];
+                    distance_input.proxy_a = make_proxy(&triangle_vertices, 0.0);
 
-                    if plane_count == capacity {
-                        return plane_count;
+                    // reset the cache
+                    cache.count = 0;
+
+                    // get distance between triangle and mover
+                    let distance_output = shape_distance(&distance_input, &mut cache, None);
+
+                    if distance_output.distance == 0.0 {
+                        // deep overlap
+                    } else if distance_output.distance <= mover.radius {
+                        let triangle_index = 2 * cell_index as i32;
+                        let plane = Plane {
+                            normal: distance_output.normal,
+                            offset: mover.radius - distance_output.distance,
+                        };
+                        planes[plane_count as usize] = PlaneResult {
+                            plane,
+                            point: distance_output.point_a,
+                            triangle_index,
+                            child_index: 0,
+                            material_index: material as i32,
+                        };
+                        plane_count += 1;
+
+                        if plane_count == capacity {
+                            return plane_count;
+                        }
                     }
                 }
             }
 
-            if test_bounds_triangle_overlap(bounds_center, bounds_extent, point21, point22, point12)
-            {
-                let triangle_vertices = [point22, point12, point21];
-                distance_input.proxy_a = make_proxy(&triangle_vertices, 0.0);
-                cache.count = 0;
+            let overlap2 = test_bounds_triangle_overlap(
+                bounds_center,
+                bounds_extent,
+                point21,
+                point22,
+                point12,
+            );
+            if overlap2 {
+                let signed_volume = signed_volume(point22, point12, point21, center);
 
-                let distance_output = shape_distance(&distance_input, &mut cache, None);
+                // Front side?
+                if signed_volume >= 0.0 {
+                    let triangle_vertices = [point22, point12, point21];
+                    distance_input.proxy_a = make_proxy(&triangle_vertices, 0.0);
 
-                if distance_output.distance == 0.0 {
-                    // todo SAT
-                } else if distance_output.distance <= mover.radius {
-                    let plane = Plane {
-                        normal: distance_output.normal,
-                        offset: mover.radius - distance_output.distance,
-                    };
-                    planes[plane_count as usize] = PlaneResult {
-                        plane,
-                        point: distance_output.point_a,
-                    };
-                    plane_count += 1;
+                    // reset the cache
+                    cache.count = 0;
 
-                    if plane_count == capacity {
-                        return plane_count;
+                    // get distance between triangle and mover
+                    let distance_output = shape_distance(&distance_input, &mut cache, None);
+
+                    if distance_output.distance == 0.0 {
+                        // deep overlap
+                    } else if distance_output.distance <= mover.radius {
+                        let triangle_index = 2 * cell_index as i32 + 1;
+                        let plane = Plane {
+                            normal: distance_output.normal,
+                            offset: mover.radius - distance_output.distance,
+                        };
+                        planes[plane_count as usize] = PlaneResult {
+                            plane,
+                            point: distance_output.point_a,
+                            triangle_index,
+                            child_index: 0,
+                            material_index: material as i32,
+                        };
+                        plane_count += 1;
+
+                        if plane_count == capacity {
+                            return plane_count;
+                        }
                     }
                 }
             }

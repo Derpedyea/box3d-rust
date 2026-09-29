@@ -445,6 +445,9 @@ pub fn dispatch_query_collide_mover(
                     offset: s.f32(),
                 },
                 point: s.vec3(),
+                triangle_index: s.i32(),
+                child_index: s.i32(),
+                material_index: s.i32(),
             });
         }
         let user_return_b = s.bool();
@@ -489,6 +492,9 @@ pub fn dispatch_query_collide_mover(
             if vec3_differs(h.plane.plane.normal, planes[i].plane.normal)
                 || f32_differs(h.plane.plane.offset, planes[i].plane.offset)
                 || vec3_differs(h.plane.point, planes[i].point)
+                || h.plane.triangle_index != planes[i].triangle_index
+                || h.plane.child_index != planes[i].child_index
+                || h.plane.material_index != planes[i].material_index
             {
                 unsafe { mark_diverged(&mut *ctx.rdr) };
             }

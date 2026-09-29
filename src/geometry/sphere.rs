@@ -255,10 +255,16 @@ pub fn collide_mover_and_sphere(result: &mut PlaneResult, shape: &Sphere, mover:
         distance = 0.0;
     }
 
-    result.plane = Plane {
+    let plane = Plane {
         normal,
         offset: total_radius - distance,
     };
-    result.point = shape.center;
+    *result = PlaneResult {
+        plane,
+        point: shape.center,
+        triangle_index: 0,
+        child_index: 0,
+        material_index: 0,
+    };
     1
 }

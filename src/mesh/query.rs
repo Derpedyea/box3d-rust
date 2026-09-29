@@ -14,8 +14,8 @@ use crate::distance::{
 };
 use crate::geometry::{Capsule, PlaneResult};
 use crate::math_functions::{
-    add, max, min, mul, mul_sv, sub, test_bounds_overlap, test_bounds_triangle_overlap, Aabb,
-    Plane, Transform, Triangle, Vec3, TRANSFORM_IDENTITY,
+    add, lerp, max, min, mul, mul_sv, signed_volume, sub, test_bounds_overlap,
+    test_bounds_triangle_overlap, Aabb, Plane, Transform, Triangle, Vec3, TRANSFORM_IDENTITY,
 };
 
 /// Test overlap between a mesh and a shape proxy. (b3OverlapMesh)
@@ -184,7 +184,7 @@ pub fn collide_mover_and_mesh(
 
     let mut cache = SimplexCache::default();
     let radius = mover.radius;
-
+    let center = lerp(mover.center1, mover.center2, 0.5);
     let r = Vec3 {
         x: radius,
         y: radius,
@@ -193,7 +193,9 @@ pub fn collide_mover_and_mesh(
     let bounds_min = sub(min(mover.center1, mover.center2), r);
     let bounds_max = add(max(mover.center1, mover.center2), r);
 
+    // Scale may have reflection so min/max may become invalid when unscaled
     let mesh_scale = shape.scale;
+    let ccw = mesh_scale.x * mesh_scale.y * mesh_scale.z > 0.0;
     let inv_scale = Vec3 {
         x: 1.0 / mesh_scale.x,
         y: 1.0 / mesh_scale.y,
@@ -213,6 +215,7 @@ pub fn collide_mover_and_mesh(
     let data = shape.data;
     let triangles = &data.triangles;
     let vertices = &data.vertices;
+    let material_indices = &data.material_indices;
 
     let mut plane_count = 0i32;
     while plane_count < capacity {
@@ -232,9 +235,14 @@ pub fn collide_mover_and_mesh(
                     let triangle = triangles[triangle_index as usize];
 
                     let vertex1 = vertices[triangle.index1 as usize];
-                    let vertex2 = vertices[triangle.index2 as usize];
-                    let vertex3 = vertices[triangle.index3 as usize];
+                    let mut vertex2 = vertices[triangle.index2 as usize];
+                    let mut vertex3 = vertices[triangle.index3 as usize];
 
+                    if !ccw {
+                        core::mem::swap(&mut vertex2, &mut vertex3);
+                    }
+
+                    // Test triangle bounds overlap in unscaled space
                     if test_bounds_triangle_overlap(
                         inv_scaled_bounds_center,
                         inv_scaled_bounds_extent,
@@ -242,18 +250,34 @@ pub fn collide_mover_and_mesh(
                         vertex2,
                         vertex3,
                     ) {
+                        // Compute shape distance in scaled space.
                         let triangle_vertices = [
                             mul(mesh_scale, vertex1),
                             mul(mesh_scale, vertex2),
                             mul(mesh_scale, vertex3),
                         ];
+
+                        // Vertices and center are in scaled space.
+                        let signed_volume = signed_volume(
+                            triangle_vertices[0],
+                            triangle_vertices[1],
+                            triangle_vertices[2],
+                            center,
+                        );
+                        if signed_volume < 0.0 {
+                            // Backside
+                            continue;
+                        }
+
                         distance_input.proxy_a = make_proxy(&triangle_vertices, 0.0);
+
+                        // reset the cache
                         cache.count = 0;
 
                         let distance_output = shape_distance(&distance_input, &mut cache, None);
 
                         if distance_output.distance == 0.0 {
-                            // todo SAT
+                            // deep overlap
                         } else if distance_output.distance <= mover.radius {
                             let plane = Plane {
                                 normal: distance_output.normal,
@@ -262,6 +286,9 @@ pub fn collide_mover_and_mesh(
                             planes[plane_count as usize] = PlaneResult {
                                 plane,
                                 point: distance_output.point_a,
+                                triangle_index,
+                                child_index: 0,
+                                material_index: material_indices[triangle_index as usize] as i32,
                             };
                             plane_count += 1;
                             if plane_count == capacity {
@@ -297,8 +324,7 @@ where
     F: FnMut(Vec3, Vec3, Vec3, i32) -> bool,
 {
     let mesh_scale = mesh.scale;
-    // C names this `clockwise` but the predicate is inverted vs ray cast.
-    let clockwise = mesh_scale.x * mesh_scale.y * mesh_scale.z > 0.0;
+    let ccw = mesh_scale.x * mesh_scale.y * mesh_scale.z > 0.0;
 
     let inv_scale = Vec3 {
         x: 1.0 / mesh_scale.x,
@@ -348,7 +374,7 @@ where
                         vertex3,
                     ) {
                         let a = mul(mesh_scale, vertex1);
-                        let (b, c) = if clockwise {
+                        let (b, c) = if ccw {
                             (mul(mesh_scale, vertex2), mul(mesh_scale, vertex3))
                         } else {
                             (mul(mesh_scale, vertex3), mul(mesh_scale, vertex2))

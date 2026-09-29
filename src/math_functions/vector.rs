@@ -97,17 +97,19 @@ pub fn normalize(a: Vec3) -> Vec3 {
 /// Normalize a vector and return the length. Returns a zero vector
 /// if the input is very small.
 pub fn get_length_and_normalize(length_out: &mut f32, a: Vec3) -> Vec3 {
-    *length_out = length(a);
-    if *length_out < f32::EPSILON {
-        return VEC3_ZERO;
+    let length_squared = a.x * a.x + a.y * a.y + a.z * a.z;
+    if length_squared > 1000.0 * f32::MIN_POSITIVE {
+        *length_out = length_squared.sqrt();
+        let s = 1.0 / *length_out;
+        return Vec3 {
+            x: s * a.x,
+            y: s * a.y,
+            z: s * a.z,
+        };
     }
 
-    let inv_length = 1.0 / *length_out;
-    Vec3 {
-        x: inv_length * a.x,
-        y: inv_length * a.y,
-        z: inv_length * a.z,
-    }
+    *length_out = 0.0;
+    VEC3_ZERO
 }
 
 /// Get a unit vector that is perpendicular to the supplied vector.

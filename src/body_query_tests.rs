@@ -21,13 +21,13 @@ use crate::types::{
 };
 use crate::world::{world_overlap_shape, World};
 
-fn create_query_world() -> (World, BodyId) {
+pub(crate) fn create_query_world() -> (World, BodyId) {
     let mut world = World::new(&default_world_def());
     let body_id = create_body(&mut world, &default_body_def());
     (world, body_id)
 }
 
-fn identity_at(x: f32, y: f32, z: f32) -> WorldTransform {
+pub(crate) fn identity_at(x: f32, y: f32, z: f32) -> WorldTransform {
     WorldTransform {
         p: Pos {
             x: x as _,

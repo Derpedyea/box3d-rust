@@ -191,6 +191,10 @@ pub fn shape_distance(
             let (local_point_a, local_point_b) = compute_witness_points(&simplex);
             distance_output.point_a = local_point_a;
             distance_output.point_b = local_point_b;
+            distance_output.normal = VEC3_ZERO;
+            distance_output.distance = 0.0;
+            distance_output.iterations = iteration;
+            distance_output.simplex_count = simplex_index as i32;
             return distance_output;
         }
 
@@ -282,6 +286,10 @@ pub fn shape_distance(
             let (local_point_a, local_point_b) = compute_witness_points(&simplex);
             distance_output.point_a = local_point_a;
             distance_output.point_b = local_point_b;
+            distance_output.normal = VEC3_ZERO;
+            distance_output.distance = 0.0;
+            distance_output.iterations = iteration;
+            distance_output.simplex_count = simplex_index as i32;
             debug_assert!(distance(local_point_a, local_point_b) < f32::EPSILON);
             return distance_output;
         }
@@ -323,23 +331,25 @@ pub fn shape_distance(
         iteration += 1;
     }
 
+    // Build witness points.
+    let (local_point_a, local_point_b) = compute_witness_points(&simplex);
+
+    distance_output.point_a = local_point_a;
+    distance_output.point_b = local_point_b;
+    distance_output.iterations = iteration;
+    distance_output.simplex_count = simplex_index as i32;
+
     normal = normalize(normal);
     if !is_normalized(normal) {
         // Treat as overlap
+        distance_output.distance = 0.0;
+        distance_output.normal = VEC3_ZERO;
         return distance_output;
     }
 
-    // Build witness points and safe cache
-    let (local_point_a, local_point_b) = compute_witness_points(&simplex);
-    write_cache(cache, &simplex);
-
     // Results stay in frame A
-    distance_output.point_a = local_point_a;
-    distance_output.point_b = local_point_b;
     distance_output.distance = distance(local_point_a, local_point_b);
     distance_output.normal = normal;
-    distance_output.iterations = iteration;
-    distance_output.simplex_count = simplex_index as i32;
 
     // Apply radii if requested
     if input.use_radii {
@@ -351,6 +361,9 @@ pub fn shape_distance(
         distance_output.point_a = add(distance_output.point_a, mul_sv(r_a, normal));
         distance_output.point_b = sub(distance_output.point_b, mul_sv(r_b, normal));
     }
+
+    // Simplex is useful, cache it.
+    write_cache(cache, &simplex);
 
     distance_output
 }

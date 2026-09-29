@@ -363,10 +363,16 @@ pub fn collide_mover_and_capsule(
         distance = 0.0;
     }
 
-    result.plane = Plane {
+    let plane = Plane {
         normal,
         offset: total_radius - distance,
     };
-    result.point = approach.point1;
+    *result = PlaneResult {
+        plane,
+        point: approach.point1,
+        triangle_index: 0,
+        child_index: 0,
+        material_index: 0,
+    };
     1
 }

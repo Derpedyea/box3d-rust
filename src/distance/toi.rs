@@ -561,6 +561,14 @@ pub fn time_of_impact(input: &ToiInput) -> ToiOutput {
         if distance_output.distance <= 0.0 {
             output.state = ToiState::Overlapped;
             output.fraction = 0.0;
+
+            // Averaged hit point
+            let p_a = mul_add(world_point_a, proxy_a.radius, world_normal);
+            let p_b = mul_add(world_point_b, -proxy_b.radius, world_normal);
+            output.point = lerp(p_a, p_b, 0.5);
+            output.point = add(output.point, origin);
+            output.normal = world_normal;
+
             break;
         }
 

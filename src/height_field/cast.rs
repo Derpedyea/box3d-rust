@@ -11,8 +11,8 @@ use crate::distance::{make_proxy, shape_cast, CastOutput, ShapeCastPairInput};
 use crate::geometry::{RayCastInput, ShapeCastInput};
 use crate::math_functions::{
     aabb_center, aabb_extents, aabb_overlaps, abs, add, cross, intersect_ray_triangle, make_aabb,
-    max, min, mul_add, mul_sv, normalize, sub, Aabb, Transform, Vec3, TRANSFORM_IDENTITY,
-    VEC3_ZERO,
+    max, min, mul_add, mul_sv, normalize, signed_volume, sub, Aabb, Transform, Vec3,
+    TRANSFORM_IDENTITY, VEC3_ZERO,
 };
 
 /// Compute the AABB of a height field. (b3ComputeHeightFieldAABB)
@@ -43,6 +43,7 @@ pub fn shape_cast_height_field(
     let shape_translation = input.translation;
     let scale = height_field.scale;
 
+    // The shape start is the center of the proxy.
     let shape_start = aabb_center(shape_bounds);
     let shape_delta = mul_sv(input.max_fraction, shape_translation);
     let shape_end = add(shape_start, shape_delta);
@@ -183,8 +184,11 @@ pub fn shape_cast_height_field(
         upper_bound: add(max(center_start, center_end), shape_extents),
     };
 
+    // The ray origin is the center of the shape.
     let ray_origin = shape_start;
     let ray_translation = shape_translation;
+
+    let clockwise = height_field.clockwise;
 
     loop {
         let (column1, column2) = if box_column_tail < box_column_head {
@@ -217,10 +221,15 @@ pub fn shape_cast_height_field(
 
                 let corners = get_height_field_cell_corners(height_field, row, column);
                 let point11 = corners[0];
-                let point12 = corners[1];
-                let point21 = corners[2];
+                let mut point12 = corners[1];
+                let mut point21 = corners[2];
                 let point22 = corners[3];
 
+                if clockwise {
+                    core::mem::swap(&mut point12, &mut point21);
+                }
+
+                // I know the min/max x and z values, but not the min/max heights.
                 let bounds = Aabb {
                     lower_bound: min(min(point11, point12), min(point21, point22)),
                     upper_bound: max(max(point11, point12), max(point21, point22)),
@@ -238,11 +247,8 @@ pub fn shape_cast_height_field(
                     // Ray cast
                     {
                         let vertex1 = point11;
-                        let (vertex2, vertex3) = if height_field.clockwise {
-                            (point12, point21)
-                        } else {
-                            (point21, point12)
-                        };
+                        let vertex2 = point21;
+                        let vertex3 = point12;
 
                         let alpha = intersect_ray_triangle(
                             ray_origin,
@@ -256,11 +262,7 @@ pub fn shape_cast_height_field(
                         if alpha < best_fraction {
                             let edge1 = sub(point21, point11);
                             let edge2 = sub(point12, point11);
-                            let normal = if height_field.clockwise {
-                                cross(edge2, edge1)
-                            } else {
-                                cross(edge1, edge2)
-                            };
+                            let normal = cross(edge1, edge2);
 
                             result.point = mul_add(shape_start, alpha, shape_translation);
                             result.normal = normalize(normal);
@@ -274,11 +276,8 @@ pub fn shape_cast_height_field(
 
                     {
                         let vertex1 = point22;
-                        let (vertex2, vertex3) = if height_field.clockwise {
-                            (point21, point12)
-                        } else {
-                            (point12, point21)
-                        };
+                        let vertex2 = point12;
+                        let vertex3 = point21;
 
                         let alpha = intersect_ray_triangle(
                             ray_origin,
@@ -292,11 +291,7 @@ pub fn shape_cast_height_field(
                         if alpha < best_fraction {
                             let edge1 = sub(point22, point21);
                             let edge2 = sub(point12, point21);
-                            let normal = if height_field.clockwise {
-                                cross(edge2, edge1)
-                            } else {
-                                cross(edge1, edge2)
-                            };
+                            let normal = cross(edge1, edge2);
 
                             result.point = mul_add(shape_start, alpha, shape_translation);
                             result.normal = normalize(normal);
@@ -310,44 +305,56 @@ pub fn shape_cast_height_field(
                 } else {
                     // Shape cast
                     {
-                        let origin = point11;
-                        let triangle_vertices =
-                            [VEC3_ZERO, sub(point21, origin), sub(point12, origin)];
-                        pair_input.proxy_a = make_proxy(&triangle_vertices, 0.0);
-                        pair_input.max_fraction = best_fraction;
-                        pair_input.transform = Transform {
-                            q: TRANSFORM_IDENTITY.q,
-                            p: crate::math_functions::neg(origin),
-                        };
+                        // shapeStart is the center of the proxy.
+                        let signed_volume = signed_volume(point11, point21, point12, shape_start);
 
-                        let pair_output = shape_cast(&pair_input);
-                        if pair_output.hit {
-                            best_fraction = pair_output.fraction;
-                            result = pair_output;
-                            result.point = add(result.point, origin);
-                            result.triangle_index = triangle_index1;
-                            result.material_index = material_index as i32;
+                        if signed_volume >= 0.0 {
+                            // Shift origin to first vertex
+                            let origin = point11;
+                            let triangle_vertices =
+                                [VEC3_ZERO, sub(point21, origin), sub(point12, origin)];
+                            pair_input.proxy_a = make_proxy(&triangle_vertices, 0.0);
+                            pair_input.max_fraction = best_fraction;
+                            pair_input.transform = Transform {
+                                q: TRANSFORM_IDENTITY.q,
+                                p: crate::math_functions::neg(origin),
+                            };
+
+                            let pair_output = shape_cast(&pair_input);
+                            if pair_output.hit {
+                                best_fraction = pair_output.fraction;
+                                result = pair_output;
+                                result.point = add(result.point, origin);
+                                result.triangle_index = triangle_index1;
+                                result.material_index = material_index as i32;
+                            }
                         }
                     }
 
                     {
-                        let origin = point21;
-                        let triangle_vertices =
-                            [VEC3_ZERO, sub(point22, origin), sub(point12, origin)];
-                        pair_input.proxy_a = make_proxy(&triangle_vertices, 0.0);
-                        pair_input.max_fraction = best_fraction;
-                        pair_input.transform = Transform {
-                            q: TRANSFORM_IDENTITY.q,
-                            p: crate::math_functions::neg(origin),
-                        };
+                        // shapeStart is the center of the proxy.
+                        let signed_volume = signed_volume(point21, point22, point12, shape_start);
 
-                        let pair_output = shape_cast(&pair_input);
-                        if pair_output.hit {
-                            best_fraction = pair_output.fraction;
-                            result = pair_output;
-                            result.point = add(result.point, origin);
-                            result.triangle_index = triangle_index2;
-                            result.material_index = material_index as i32;
+                        if signed_volume >= 0.0 {
+                            // Shift origin to first vertex
+                            let origin = point21;
+                            let triangle_vertices =
+                                [VEC3_ZERO, sub(point22, origin), sub(point12, origin)];
+                            pair_input.proxy_a = make_proxy(&triangle_vertices, 0.0);
+                            pair_input.max_fraction = best_fraction;
+                            pair_input.transform = Transform {
+                                q: TRANSFORM_IDENTITY.q,
+                                p: crate::math_functions::neg(origin),
+                            };
+
+                            let pair_output = shape_cast(&pair_input);
+                            if pair_output.hit {
+                                best_fraction = pair_output.fraction;
+                                result = pair_output;
+                                result.point = add(result.point, origin);
+                                result.triangle_index = triangle_index2;
+                                result.material_index = material_index as i32;
+                            }
                         }
                     }
                 }

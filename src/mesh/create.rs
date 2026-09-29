@@ -191,6 +191,48 @@ pub fn is_valid_mesh(mesh: Option<&MeshData>) -> bool {
     true
 }
 
+// Stride larger than this likely indicates stride is uninitialized memory.
+const MAX_STRIDE: usize = 4096;
+
+const VEC3_BYTE_COUNT: usize = core::mem::size_of::<Vec3>();
+
+/// Gather the definition's interleaved `vertex_bytes` into a contiguous array,
+/// reading through the byte stride. (b3GetStridedVertex / b3CopyVerticesWithStride)
+///
+/// C reads strided vertices in place while welding or copying. Gathering them
+/// first is equivalent: both paths only read vertex `i` at byte `i * stride`.
+/// Only complete positions inside the source buffer are read, where C trusts
+/// `vertexCount`.
+fn gather_strided_vertices(def: &MeshDef, stride: usize) -> Vec<Vec3> {
+    debug_assert!(stride >= VEC3_BYTE_COUNT && stride % 4 == 0);
+    debug_assert!(!def.vertex_bytes.is_empty());
+
+    let bytes = &def.vertex_bytes;
+    let count = if bytes.len() >= VEC3_BYTE_COUNT {
+        (bytes.len() - VEC3_BYTE_COUNT) / stride + 1
+    } else {
+        0
+    };
+    let read_float = |offset: usize| -> f32 {
+        f32::from_ne_bytes([
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+        ])
+    };
+    (0..count)
+        .map(|i| {
+            let offset = i * stride;
+            Vec3 {
+                x: read_float(offset),
+                y: read_float(offset + 4),
+                z: read_float(offset + 8),
+            }
+        })
+        .collect()
+}
+
 /// Create a mesh from a definition. (b3CreateMesh)
 ///
 /// Returns `None` on invalid input or BVH overflow. Degenerate triangle indices
@@ -199,7 +241,37 @@ pub fn create_mesh(
     def: &MeshDef,
     degenerate_triangle_indices: Option<&mut [i32]>,
 ) -> Option<MeshData> {
-    let vertex_count_in = def.vertices.len() as i32;
+    if def.stride != 0 && (def.stride < VEC3_BYTE_COUNT || MAX_STRIDE < def.stride) {
+        return None;
+    }
+
+    if (def.stride & 3) != 0 {
+        return None;
+    }
+
+    debug_assert!(
+        def.vertex_bytes.is_empty() || def.vertices.is_empty(),
+        "set either vertices or vertex_bytes, not both"
+    );
+
+    let stride = if def.stride == 0 {
+        VEC3_BYTE_COUNT
+    } else {
+        def.stride
+    };
+
+    // The stride only applies to the interleaved byte buffer. Contiguous `vertices`
+    // must use a stride of 0 or size_of::<Vec3>().
+    let src_vertices = if def.vertex_bytes.is_empty() {
+        if stride != VEC3_BYTE_COUNT {
+            return None;
+        }
+        def.vertices.clone()
+    } else {
+        gather_strided_vertices(def, stride)
+    };
+
+    let vertex_count_in = src_vertices.len() as i32;
     let triangle_count_in = (def.indices.len() / 3) as i32;
 
     if vertex_count_in < 3 || triangle_count_in <= 0 || def.indices.len() < 3 {
@@ -213,7 +285,7 @@ pub fn create_mesh(
     if def.weld_vertices && def.weld_tolerance > 0.0 {
         vertices = vec![Vec3::default(); vertex_count as usize];
         vertex_count = weld_vertices(
-            &def.vertices,
+            &src_vertices,
             &def.indices[..(3 * triangle_count_in) as usize],
             &mut vertices,
             &mut indices,
@@ -222,7 +294,7 @@ pub fn create_mesh(
         vertices.truncate(vertex_count as usize);
         debug_assert!(vertex_count <= vertex_count_in);
     } else {
-        vertices = def.vertices.clone();
+        vertices = src_vertices;
         indices.copy_from_slice(&def.indices[..(3 * triangle_count_in) as usize]);
     }
 
@@ -320,6 +392,7 @@ pub fn create_mesh(
         &primitives,
         &indices,
         src_materials,
+        def.clock_wise_winding,
     );
 
     if !sort_mesh_triangles(&mut mesh) {
@@ -380,6 +453,7 @@ mod tests {
             weld_vertices: false,
             use_median_split: true,
             identify_edges: false,
+            ..Default::default()
         };
         let mut degenerate = [-1i32; 8];
         let mesh = create_mesh(&def, Some(&mut degenerate)).expect("mesh");
@@ -423,6 +497,7 @@ mod tests {
             weld_vertices: true,
             use_median_split: true,
             identify_edges: true,
+            ..Default::default()
         };
         let mut degenerate = [0i32; 8];
         let mesh = create_mesh(&def, Some(&mut degenerate)).expect("mesh");

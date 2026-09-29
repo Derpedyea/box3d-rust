@@ -690,6 +690,7 @@ pub fn body_get_world_point_velocity(world: &World, body_id: BodyId, world_point
 }
 
 /// Collide a capsule mover against a single body's sphere/capsule/hull shapes.
+/// Only considers convex shapes on the body.
 /// (b3Body_CollideMover)
 pub fn body_collide_mover(
     world: &World,

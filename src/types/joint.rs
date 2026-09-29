@@ -302,6 +302,9 @@ pub struct SphericalJointDef {
     pub upper_twist_angle: f32,
     pub enable_motor: bool,
     pub max_motor_torque: f32,
+    /// The desired motor angular velocity in radians per second. This is the relative angular
+    /// velocity between the two bodies in world space.
+    /// motorVelocity = angularVelocityB - angularVelocityA
     pub motor_velocity: Vec3,
 }
 

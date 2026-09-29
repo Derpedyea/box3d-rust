@@ -118,6 +118,7 @@ pub(crate) fn build_mesh_from_temp(
         weld_vertices,
         use_median_split,
         identify_edges,
+        ..Default::default()
     };
     create_mesh(&def, degenerate_triangle_indices)
 }

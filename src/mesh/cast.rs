@@ -9,7 +9,7 @@ use crate::distance::{make_proxy, shape_cast, CastOutput, ShapeCastPairInput};
 use crate::geometry::{RayCastInput, ShapeCastInput};
 use crate::math_functions::{
     aabb_center, aabb_extents, aabb_transform, abs, add, cross, get_by_index,
-    intersect_ray_triangle, make_aabb, max, min, mul, mul_sv, neg, normalize, sub,
+    intersect_ray_triangle, make_aabb, max, min, mul, mul_sv, neg, normalize, signed_volume, sub,
     test_bounds_overlap, test_bounds_ray_overlap, Aabb, Transform, Vec3, QUAT_IDENTITY, VEC3_ZERO,
 };
 
@@ -44,7 +44,7 @@ pub fn ray_cast_mesh(mesh: &Mesh<'_>, input: &RayCastInput) -> CastOutput {
         y: 1.0 / mesh_scale.y,
         z: 1.0 / mesh_scale.z,
     };
-    let clockwise = mesh_scale.x * mesh_scale.y * mesh_scale.z < 0.0;
+    let ccw = mesh_scale.x * mesh_scale.y * mesh_scale.z > 0.0;
 
     let inv_scaled_ray_start = mul(inv_scale, ray_start);
     let inv_scaled_ray_delta = mul(inv_scale, ray_delta);
@@ -82,15 +82,16 @@ pub fn ray_cast_mesh(mesh: &Mesh<'_>, input: &RayCastInput) -> CastOutput {
                     let triangle = triangles[triangle_index as usize];
 
                     let vertex1 = mul(mesh_scale, vertices[triangle.index1 as usize]);
-                    let (vertex2, vertex3) = if clockwise {
+                    // The CPU should predict this branch
+                    let (vertex2, vertex3) = if ccw {
                         (
-                            mul(mesh_scale, vertices[triangle.index3 as usize]),
                             mul(mesh_scale, vertices[triangle.index2 as usize]),
+                            mul(mesh_scale, vertices[triangle.index3 as usize]),
                         )
                     } else {
                         (
-                            mul(mesh_scale, vertices[triangle.index2 as usize]),
                             mul(mesh_scale, vertices[triangle.index3 as usize]),
+                            mul(mesh_scale, vertices[triangle.index2 as usize]),
                         )
                     };
 
@@ -175,7 +176,7 @@ pub fn shape_cast_mesh(mesh: &Mesh<'_>, input: &ShapeCastInput) -> CastOutput {
         z: 1.0 / mesh_scale.z,
     };
     let abs_inv_scale = abs(inv_scale);
-    let clockwise = mesh_scale.x * mesh_scale.y * mesh_scale.z < 0.0;
+    let ccw = mesh_scale.x * mesh_scale.y * mesh_scale.z > 0.0;
 
     let inv_scaled_ray_start = mul(inv_scale, ray_start);
     let inv_scaled_ray_delta = mul(inv_scale, ray_delta);
@@ -214,57 +215,71 @@ pub fn shape_cast_mesh(mesh: &Mesh<'_>, input: &ShapeCastInput) -> CastOutput {
                     let triangle = triangles[triangle_index as usize];
 
                     let vertex1 = mul(mesh_scale, vertices[triangle.index1 as usize]);
-                    let (vertex2, vertex3) = if clockwise {
+                    // The CPU should predict this branch
+                    let (vertex2, vertex3) = if ccw {
                         (
-                            mul(mesh_scale, vertices[triangle.index3 as usize]),
                             mul(mesh_scale, vertices[triangle.index2 as usize]),
+                            mul(mesh_scale, vertices[triangle.index3 as usize]),
                         )
                     } else {
                         (
-                            mul(mesh_scale, vertices[triangle.index2 as usize]),
                             mul(mesh_scale, vertices[triangle.index3 as usize]),
+                            mul(mesh_scale, vertices[triangle.index2 as usize]),
                         )
                     };
 
                     let triangle_min = sub(min(vertex1, min(vertex2, vertex3)), shape_extent);
                     let triangle_max = add(max(vertex1, max(vertex2, vertex3)), shape_extent);
 
-                    if test_bounds_overlap(triangle_min, triangle_max, ray_min, ray_max) {
-                        let origin = vertex1;
-                        let triangle_vertices =
-                            [VEC3_ZERO, sub(vertex2, origin), sub(vertex3, origin)];
-                        let shifted_origin = Transform {
-                            p: neg(origin),
-                            q: QUAT_IDENTITY,
-                        };
+                    // Test extended triangle vs ray bounds overlap in scaled space. Skip edge tests.
+                    let overlap = test_bounds_overlap(triangle_min, triangle_max, ray_min, ray_max);
+                    if !overlap {
+                        continue;
+                    }
 
-                        let pair_input = ShapeCastPairInput {
-                            proxy_a: make_proxy(&triangle_vertices, 0.0),
-                            proxy_b: input.proxy,
-                            transform: shifted_origin,
-                            max_fraction: best_output.fraction,
-                            translation_b: input.translation,
-                            can_encroach: input.can_encroach,
-                        };
+                    // This test is in scaled space. vertices and center are scaled.
+                    let signed_volume = signed_volume(vertex1, vertex2, vertex3, center);
+                    if signed_volume < 0.0 {
+                        // Backside
+                        continue;
+                    }
 
-                        let mut pair_output = shape_cast(&pair_input);
-                        if pair_output.hit {
-                            pair_output.point = add(pair_output.point, origin);
-                            best_output = pair_output;
-                            best_output.triangle_index = triangle_index;
-                            best_output.material_index =
-                                material_indices[triangle_index as usize] as i32;
+                    // Collide shape with triangle in scaled space.
+                    let origin = vertex1;
+                    let triangle_vertices = [VEC3_ZERO, sub(vertex2, origin), sub(vertex3, origin)];
+                    let shifted_origin = Transform {
+                        p: neg(origin),
+                        q: QUAT_IDENTITY,
+                    };
 
-                            lambda = best_output.fraction;
-                            ray_end = add(ray_start, mul_sv(lambda, ray_delta));
-                            ray_min = min(ray_start, ray_end);
-                            ray_max = max(ray_start, ray_end);
+                    let pair_input = ShapeCastPairInput {
+                        proxy_a: make_proxy(&triangle_vertices, 0.0),
+                        proxy_b: input.proxy,
+                        transform: shifted_origin,
+                        max_fraction: best_output.fraction,
+                        translation_b: input.translation,
+                        can_encroach: input.can_encroach,
+                    };
 
-                            inv_scaled_ray_end =
-                                add(inv_scaled_ray_start, mul_sv(lambda, inv_scaled_ray_delta));
-                            inv_scaled_ray_min = min(inv_scaled_ray_start, inv_scaled_ray_end);
-                            inv_scaled_ray_max = max(inv_scaled_ray_start, inv_scaled_ray_end);
-                        }
+                    let mut pair_output = shape_cast(&pair_input);
+                    if pair_output.hit {
+                        pair_output.point = add(pair_output.point, origin);
+                        best_output = pair_output;
+                        best_output.triangle_index = triangle_index;
+                        best_output.material_index =
+                            material_indices[triangle_index as usize] as i32;
+
+                        // Update ray bounds in scaled space
+                        lambda = best_output.fraction;
+                        ray_end = add(ray_start, mul_sv(lambda, ray_delta));
+                        ray_min = min(ray_start, ray_end);
+                        ray_max = max(ray_start, ray_end);
+
+                        // Ray bounds in unscaled space
+                        inv_scaled_ray_end =
+                            add(inv_scaled_ray_start, mul_sv(lambda, inv_scaled_ray_delta));
+                        inv_scaled_ray_min = min(inv_scaled_ray_start, inv_scaled_ray_end);
+                        inv_scaled_ray_max = max(inv_scaled_ray_start, inv_scaled_ray_end);
                     }
                 }
             } else {

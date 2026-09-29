@@ -194,10 +194,11 @@ pub fn compute_shape_extent(shape: &Shape, local_center: Vec3) -> ShapeExtent {
                 y: radius,
                 z: radius,
             };
-            extent.max_extent = add(max(c1, c2), r);
+            extent.max_extent = add(max(abs(c1), abs(c2)), r);
         }
 
         ShapeGeometry::Compound(compound) => {
+            // This is shouldn't be needed but here for completeness
             let aabb = compute_compound_aabb(compound, TRANSFORM_IDENTITY);
             let r1 = crate::math_functions::length(sub(aabb.lower_bound, local_center));
             let r2 = crate::math_functions::length(sub(aabb.upper_bound, local_center));
@@ -209,13 +210,13 @@ pub fn compute_shape_extent(shape: &Shape, local_center: Vec3) -> ShapeExtent {
         ShapeGeometry::Sphere(sphere) => {
             let radius = sphere.radius;
             extent.min_extent = radius;
+            let h = abs(sub(sphere.center, local_center));
             let r = Vec3 {
                 x: radius,
                 y: radius,
                 z: radius,
             };
-            let p = add(sub(sphere.center, local_center), r);
-            extent.max_extent = abs(sub(p, local_center));
+            extent.max_extent = add(h, r);
         }
 
         ShapeGeometry::Hull(hull) => {
@@ -223,12 +224,13 @@ pub fn compute_shape_extent(shape: &Shape, local_center: Vec3) -> ShapeExtent {
         }
 
         ShapeGeometry::Mesh { data, scale } => {
+            // This is needed for kinematic mesh sleeping
             let aabb = compute_mesh_aabb(data, TRANSFORM_IDENTITY, *scale);
             let r1 = crate::math_functions::length(sub(aabb.lower_bound, local_center));
             let r2 = crate::math_functions::length(sub(aabb.upper_bound, local_center));
             extent.min_extent = min_float(r1, r2);
             let p = farthest_point_on_aabb(aabb, local_center);
-            extent.max_extent = abs(p);
+            extent.max_extent = abs(sub(p, local_center));
         }
 
         ShapeGeometry::HeightField(_) => {}

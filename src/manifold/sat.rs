@@ -198,14 +198,12 @@ pub(crate) fn reduce_manifold_points(
     // Step 2: farthest point in 2D
     best_score = 0.0;
     best_index = NULL_INDEX;
-    let mut max_distance_squared = 0.0;
 
     for index in 0..count {
         let p = points[index as usize].point;
         let d = crate::math_functions::sub(p, a);
         let v = mul_sub(d, dot(d, normal), normal);
         let distance_squared = length_squared(v);
-        max_distance_squared = max_float(max_distance_squared, distance_squared);
         let separation = max_float(0.0, -points[index as usize].separation);
         let score = distance_squared + 4.0 * separation * separation;
         if bias * score > best_score {
@@ -213,8 +211,6 @@ pub(crate) fn reduce_manifold_points(
             best_index = index;
         }
     }
-
-    let _ = max_distance_squared;
 
     if best_score < tol_sqr {
         return;

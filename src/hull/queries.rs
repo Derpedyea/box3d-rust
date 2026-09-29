@@ -219,11 +219,17 @@ pub fn collide_mover_and_hull(result: &mut PlaneResult, shape: &HullData, mover:
     }
 
     if distance_output.distance <= total_radius {
-        result.plane = Plane {
+        let plane = Plane {
             normal: distance_output.normal,
             offset: total_radius - distance_output.distance,
         };
-        result.point = distance_output.point_a;
+        *result = PlaneResult {
+            plane,
+            point: distance_output.point_a,
+            triangle_index: 0,
+            child_index: 0,
+            material_index: 0,
+        };
         return 1;
     }
 

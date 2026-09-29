@@ -20,6 +20,7 @@ use crate::math_functions::{
     is_valid_transform, length, max_float, perp, rotate_vector, sub_pos, transform_world_point,
     Transform, Vec3, VEC3_AXIS_X, VEC3_ZERO,
 };
+use crate::solver_set::AWAKE_SET;
 use crate::world::World;
 
 /// (b3Joint_SetConstraintTuning)
@@ -157,6 +158,14 @@ pub fn joint_wake_bodies(world: &mut World, joint_id: JointId) {
     wake_body(world, body_id_b);
 
     world.locked = false;
+}
+
+/// Is the joint awake? If true then an attached body is awake. (b3Joint_IsAwake)
+pub fn joint_is_awake(world: &World, joint_id: JointId) -> bool {
+    let id = get_joint_full_id(world, joint_id);
+
+    // Cheaper than checking if the bodies are awake.
+    world.joints[id as usize].set_index == AWAKE_SET
 }
 
 /// Copy of the joint sim so force helpers can also borrow `&World`.

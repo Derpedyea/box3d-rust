@@ -175,6 +175,9 @@ impl QueryWriter {
             self.buf.append_vec3(p.plane.normal);
             self.buf.append_f32(p.plane.offset);
             self.buf.append_vec3(p.point);
+            self.buf.append_i32(p.triangle_index);
+            self.buf.append_i32(p.child_index);
+            self.buf.append_i32(p.material_index);
         }
         self.buf.append_bool(user_return);
         self.hit_count += 1;

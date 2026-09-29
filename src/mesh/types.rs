@@ -47,9 +47,23 @@ pub const ALL_FLAT_EDGES: i32 = FLAT_EDGE1 | FLAT_EDGE2 | FLAT_EDGE3;
 /// Data used to create a re-usable collision mesh. (b3MeshDef)
 #[derive(Debug, Clone, Default)]
 pub struct MeshDef {
-    /// Triangle vertices.
+    /// Triangle vertices. Leave empty when using [`Self::vertex_bytes`].
     pub vertices: Vec<Vec3>,
-    /// Triangle vertex indices (3 per triangle).
+    /// Stride between vertices in bytes. Use 0 for contiguous vertices.
+    ///
+    /// The stride applies only to [`Self::vertex_bytes`]. With contiguous
+    /// [`Self::vertices`] the stride must be 0 or `size_of::<Vec3>()`, otherwise
+    /// `create_mesh` returns `None`. Like C, `create_mesh` also rejects a non-zero
+    /// stride smaller than a `Vec3`, larger than 4096, or not a multiple of 4.
+    pub stride: usize,
+    /// Interleaved vertex buffer, the Rust stand-in for pointing C's `vertices`
+    /// into a larger vertex struct. When non-empty, vertex `i` is read as three
+    /// native-endian `f32` values starting at byte `i * stride` (the buffer
+    /// starts at the first vertex position). The vertex count is the number of
+    /// complete positions reachable at that stride.
+    pub vertex_bytes: Vec<u8>,
+    /// Triangle vertex indices (3 per triangle). CCW winding unless
+    /// [`Self::clock_wise_winding`] is set.
     pub indices: Vec<i32>,
     /// Triangle material index (1 per triangle). Empty = all zero.
     pub material_indices: Vec<u8>,
@@ -61,6 +75,8 @@ pub struct MeshDef {
     pub use_median_split: bool,
     /// Compute triangle adjacency information using shared edges.
     pub identify_edges: bool,
+    /// Input indices have clockwise winding order.
+    pub clock_wise_winding: bool,
 }
 
 /// A mesh triangle. (b3MeshTriangle)

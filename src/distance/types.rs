@@ -220,21 +220,21 @@ pub enum ToiState {
 /// Time of impact output. (b3TOIOutput)
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ToiOutput {
-    /// The type of result
+    /// The type of result.
     pub state: ToiState,
-    /// The hit point
+    /// The hit point. A shared point if overlapped.
     pub point: Vec3,
-    /// The hit normal
+    /// The hit normal. Zero if overlapped.
     pub normal: Vec3,
-    /// The sweep time of the collision
+    /// The sweep time of the collision. 0 if overlapped.
     pub fraction: f32,
-    /// The final distance
+    /// The final distance. 0 if overlapped.
     pub distance: f32,
-    /// Number of outer iterations
+    /// Number of outer iterations.
     pub distance_iterations: i32,
-    /// Total number of push back iterations
+    /// Total number of push back iterations.
     pub push_back_iterations: i32,
-    /// Total number of root iterations
+    /// Total number of root iterations.
     pub root_iterations: i32,
     /// Indicates that the time of impact detected initial overlap and used a
     /// fallback sphere as a last ditch effort to prevent tunneling.

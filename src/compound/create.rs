@@ -17,7 +17,7 @@ use crate::geometry::{
     compute_capsule_aabb, compute_sphere_aabb, SurfaceMaterial, SURFACE_MATERIAL_SIZE,
 };
 use crate::hull::{compare_hull_data, compute_hull_aabb, HullData};
-use crate::math_functions::{align_up8, TRANSFORM_IDENTITY};
+use crate::math_functions::{align_up8, min_int, TRANSFORM_IDENTITY};
 use crate::mesh::{compute_mesh_aabb, MeshData};
 
 struct SharedHull {
@@ -149,9 +149,18 @@ pub fn create_compound(def: &CompoundDef<'_>) -> Option<CompoundData> {
         tree.create_proxy(aabb, !0u64, child_index as u64);
         child_index += 1;
 
+        // No effort to share mesh materials. It would be easier to do if the number of materials was limited.
         debug_assert_eq!(mesh_data.material_count as usize, mesh_def.materials.len());
 
-        for (j, mat) in mesh_def.materials.iter().enumerate() {
+        let mesh_material_count = min_int(
+            mesh_def.materials.len() as i32,
+            MAX_COMPOUND_MESH_MATERIALS as i32,
+        );
+
+        for (j, mat) in mesh_def.materials[..mesh_material_count as usize]
+            .iter()
+            .enumerate()
+        {
             let material_index = get_or_insert_material(&mut materials, mat);
             mesh_instances[i].material_indices[j] = material_index as u32;
         }

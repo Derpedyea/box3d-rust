@@ -254,6 +254,9 @@ pub fn spherical_joint_is_motor_enabled(world: &World, joint_id: JointId) -> boo
         .enable_motor
 }
 
+/// Set the spherical joint motor velocity in radians per second. This is the relative angular
+/// velocity between the two bodies in world space.
+/// motorVelocity = angularVelocityB - angularVelocityA
 /// (b3SphericalJoint_SetMotorVelocity)
 pub fn spherical_joint_set_motor_velocity(
     world: &mut World,
@@ -583,6 +586,7 @@ pub fn solve_spherical_joint(
     if joint.enable_motor && !fixed_rotation {
         let cdot = sub(w_b, w_a);
 
+        // todo it might be more accurate to have the motor velocity in frameA due to sub-stepping.
         let mut lambda = neg(mul_mv(joint.rotation_mass, sub(cdot, joint.motor_velocity)));
         let mut new_impulse = add(joint.motor_impulse, lambda);
         let len = length(new_impulse);

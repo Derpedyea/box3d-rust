@@ -584,13 +584,22 @@ pub(super) fn fill_triangles(
     primitives: &[Primitive],
     indices: &[i32],
     src_materials: Option<&[u8]>,
+    clock_wise: bool,
 ) {
     for (index, primitive) in primitives.iter().enumerate() {
         let ti = primitive.triangle_index;
+
+        let i1 = 3 * ti;
+        let mut i2 = 3 * ti + 1;
+        let mut i3 = 3 * ti + 2;
+        if clock_wise {
+            core::mem::swap(&mut i2, &mut i3);
+        }
+
         triangles[index] = MeshTriangle {
-            index1: indices[(3 * ti) as usize],
-            index2: indices[(3 * ti + 1) as usize],
-            index3: indices[(3 * ti + 2) as usize],
+            index1: indices[i1 as usize],
+            index2: indices[i2 as usize],
+            index3: indices[i3 as usize],
         };
         flags[index] = 0;
         if let Some(mats) = src_materials {
