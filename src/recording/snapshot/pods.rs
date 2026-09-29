@@ -222,6 +222,7 @@ pub fn ser_world_config(buf: &mut RecBuffer, world: &World) {
     buf.append_vec3(world.gravity);
     buf.append_f32(world.hit_event_threshold);
     buf.append_f32(world.restitution_threshold);
+    buf.append_i32(world.restitution_iterations);
     buf.append_f32(world.max_linear_speed);
     buf.append_f32(world.contact_speed);
     buf.append_f32(world.contact_hertz);
@@ -247,6 +248,9 @@ pub fn ser_world_config(buf: &mut RecBuffer, world: &World) {
     if world.enable_speculative {
         flags |= 0x08;
     }
+    if world.enable_restitution_propagation {
+        flags |= 0x10;
+    }
     buf.append_u8(flags);
 }
 
@@ -254,6 +258,7 @@ pub fn des_world_config(r: &mut SnapReader<'_>, world: &mut World) {
     world.gravity = r.vec3();
     world.hit_event_threshold = r.f32();
     world.restitution_threshold = r.f32();
+    world.restitution_iterations = r.i32();
     world.max_linear_speed = r.f32();
     world.contact_speed = r.f32();
     world.contact_hertz = r.f32();
@@ -271,6 +276,7 @@ pub fn des_world_config(r: &mut SnapReader<'_>, world: &mut World) {
     world.enable_warm_starting = flags & 0x02 != 0;
     world.enable_continuous = flags & 0x04 != 0;
     world.enable_speculative = flags & 0x08 != 0;
+    world.enable_restitution_propagation = flags & 0x10 != 0;
 }
 
 fn ser_capacity(buf: &mut RecBuffer, c: &Capacity) {

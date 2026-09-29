@@ -14,6 +14,7 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
 - `954cf87` Fixes (#157)
 - `f555ee4` Optimize Broad-Phase (#159)
 - `9e5a4cd` Optimizations (#161)
+- `79fc559` Optimizations (#168)
 
 ### Breaking
 
@@ -122,6 +123,28 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
 - Recording format minor version advances to 7 and the world snapshot version
   to 7 (upstream `9e5a4cd`): snapshots store `World::fat_aabbs` after the
   shapes and keep the contact body sim locators. Older snapshots are rejected.
+- The same-step restitution from `9e5a4cd` is replaced by a post-solve
+  restitution stage again (upstream `79fc559`): `ManifoldConstraintPoint`
+  carries `relative_velocity` and `restitution_impulse` (instead of
+  `restitution_velocity`) and `ContactConstraint` regains `restitution`.
+  `apply_restitution` (Mesh/overflow) returns with a new signature taking the
+  restitution threshold and the propagation flag, and `StepContext` loses
+  `restitution_threshold` (the solver reads the world's value, like C).
+- Graph-color convex contacts are solved by a four lane wide constraint
+  (`contact_solver::wide`, `ContactConstraintWide`) that runs the scalar
+  `b3FloatW` path, replacing the per-lane `solve_contacts_convex` /
+  `push_contacts_convex` / `warm_start_contacts_convex` on `ContactConstraint`.
+  `prepare_color_contacts` is replaced by `prepare_mesh_contacts` and
+  `wide::prepare_contacts_convex`. The `b3FloatW` helpers move from
+  `manifold` to the crate-level `simd_scalar` module.
+- `world_rebuild_static_tree` is now crate-internal (upstream removed
+  `b3World_RebuildStaticTree` from the public API); the recording op still
+  replays it.
+- Recording format minor version advances to 8 (upstream `79fc559`) with the
+  new ops `0x0E` `WorldSetRestitutionIterations` and `0x0F`
+  `WorldEnableRestitutionPropagation`. The world snapshot version advances to
+  10: the world config stores `restitution_iterations` and the restitution
+  propagation flag (bit `0x10`). Older snapshots are rejected.
 
 ### Changed
 
@@ -193,9 +216,38 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
   sim.
 - The ragdoll and mesh-drop determinism goldens change and match upstream in
   both precision modes.
+- Post-solve Poisson kinetic restitution (upstream `79fc559`): after the
+  sub-steps, a restitution stage runs `World::restitution_iterations` times
+  (overflow, then each color's wide and mesh contacts) when any contact has
+  restitution. A bounce is armed from the sampled pre-solve normal velocity
+  and limited by the compression impulse, so it never gains energy. With
+  `enable_restitution_propagation` the stage also sweeps contacts without
+  restitution. The relax pass is back to a single sweep.
+- The wide convex prepare gathers straight into the lanes (perpendicular
+  tangents, symmetric inverse inertia and rolling mass, friction impulse
+  projected onto the tangents), the wide warm start applies one accumulated
+  impulse per body, and push/solve compute separation with normals rotated
+  into body space, matching upstream's operation order.
+- Contact recycling zeroes the manifold point `normal_velocity`.
+- `HAD_TIME_OF_IMPACT` is set on the body sim when continuous collision
+  moves the body (not per query hit), survives `sync_body_flags`, and debug
+  draw reads it from the sim. The continuous query skips bullets by the body
+  flag.
+- `DynamicTree::rebuild(true)` (full build) keeps the moved marks, so a
+  static rebuild between a static mutation and the next step no longer loses
+  the pending pairs.
+- Joints between two non-dynamic bodies go to the static set when a body is
+  enabled; the prismatic and weld prepare asserts accept either body awake.
+- The ragdoll, wave-pile, and query-spawn determinism goldens change and
+  match upstream in both precision modes.
 
 ### Fixed
 
+- `should_bodies_collide` now rejects pairs where neither body is dynamic,
+  like upstream's `b3ShouldBodiesCollide` (found by the new broad-phase
+  stress test).
+- Disabling a kinematic body attached to a static body by a joint no longer
+  trips the joint set assertion (upstream issue #164).
 - Overflow-color contacts now flag hit events, like upstream's
   `b3StoreImpulses_Overflow` (the port only flagged graph-color contacts).
 - Body extents (upstream `47d7f7c`): capsule and sphere `max_extent` now
@@ -253,6 +305,11 @@ upstream `9f998c8`, one upstream commit at a time. Ported so far:
 
 ### Added
 
+- Upstream `79fc559` API: `WorldDef::restitution_iterations` (default 2) and
+  `enable_restitution_propagation`, `world_set_restitution_iterations` /
+  `world_get_restitution_iterations` (clamped to the new
+  `MAX_RESTITUTION_ITERATIONS` = 63), `world_enable_restitution_propagation` /
+  `world_is_restitution_propagation_enabled`, and `Profile::restitution`.
 - Upstream `47d7f7c` API: `body_time_of_impact_mover` with `BodyToiResult`
   (b3Body_TimeOfImpactMover), `body_get_min_extent`, `body_get_max_extent`,
   `body_get_max_extent_origin`, and `joint_is_awake`.

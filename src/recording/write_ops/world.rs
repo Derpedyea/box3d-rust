@@ -138,4 +138,20 @@ impl Recording {
         self.buffer.append_bool(flag);
         self.end_record();
     }
+
+    /// Write framed `WorldSetRestitutionIterations` op.
+    pub fn write_world_set_restitution_iterations(&mut self, world: WorldId, iterations: i32) {
+        self.begin_record(RecOp::WorldSetRestitutionIterations as u8);
+        self.buffer.append_world_id(world);
+        self.buffer.append_i32(iterations);
+        self.end_record();
+    }
+
+    /// Write framed `WorldEnableRestitutionPropagation` op.
+    pub fn write_world_enable_restitution_propagation(&mut self, world: WorldId, flag: bool) {
+        self.begin_record(RecOp::WorldEnableRestitutionPropagation as u8);
+        self.buffer.append_world_id(world);
+        self.buffer.append_bool(flag);
+        self.end_record();
+    }
 }

@@ -13,7 +13,6 @@ mod hull_capsule;
 mod hulls;
 mod sat;
 mod separating_axis;
-mod simd_scalar;
 mod spheres;
 mod triangle;
 mod triangle_face;

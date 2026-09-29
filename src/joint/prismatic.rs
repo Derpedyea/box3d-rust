@@ -316,7 +316,7 @@ pub fn prepare_prismatic_joint(world: &World, base: &mut JointSim, context: &Ste
     let body_a = &world.bodies[id_a as usize];
     let body_b = &world.bodies[id_b as usize];
 
-    debug_assert!(body_b.set_index == AWAKE_SET);
+    debug_assert!(body_a.set_index == AWAKE_SET || body_b.set_index == AWAKE_SET);
 
     let body_sim_a =
         &world.solver_sets[body_a.set_index as usize].body_sims[body_a.local_index as usize];

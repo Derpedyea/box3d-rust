@@ -124,6 +124,10 @@ pub const CONTACT_MANIFOLD_COUNT_BUCKETS: usize = 8;
 /// (B3_TIME_TO_SLEEP)
 pub const TIME_TO_SLEEP: f32 = 0.5;
 
+/// The maximum number of restitution iterations. Needed to avoid a solver overflow.
+/// (B3_MAX_RESTITUTION_ITERATIONS)
+pub const MAX_RESTITUTION_ITERATIONS: i32 = 63;
+
 /// Null name id in the name cache. (B3_NULL_NAME)
 pub const NULL_NAME: u32 = 0;
 

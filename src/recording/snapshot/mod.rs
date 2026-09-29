@@ -27,9 +27,10 @@ pub const SNAP_MAGIC: u32 = 0x3353_4E42;
 /// Snapshot format version — v2 added the name cache, v3 added `Body::safety_factor`, v5
 /// moved the broad phase to the tree against tree pair traversal (move buffer removed), v7
 /// split the fat AABBs into a world array and kept the contact body sim locators (same-step
-/// restitution).
+/// restitution), v10 stores the world restitution iterations and the restitution propagation
+/// flag (0x10) in the world config (post solve restitution).
 /// (B3_SNAP_VERSION)
-pub const SNAP_VERSION: u32 = 7;
+pub const SNAP_VERSION: u32 = 10;
 /// Rust field-layout version — bump when serialized record layouts change.
 /// v2: `Body` record gained `safety_factor` (C gets the equivalent change for free because
 /// b3ComputeLayoutHash hashes `sizeof( b3Body )`).

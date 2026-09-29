@@ -204,6 +204,7 @@ fn collide_task(world: &mut World, contact_indices: &[i32], worker_index: i32) {
                             let r_b = mul_mv(matrix_b, mp.anchor_b);
                             let dp = crate::math_functions::add(dc, sub(r_b, r_a));
                             mp.separation = mp.base_separation + dot(dp, normal);
+                            mp.normal_velocity = 0.0;
                             mp.persisted = true;
                         }
                     }

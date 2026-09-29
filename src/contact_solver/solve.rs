@@ -5,11 +5,10 @@
 
 use super::ContactConstraint;
 use crate::body::{body_flags, BodyState, IDENTITY_BODY_STATE};
-use crate::constants::MAX_MANIFOLD_POINTS;
 use crate::core::NULL_INDEX;
 use crate::math_functions::{
-    add, blend2, clamp_float, cross, dot, dot2, max_float, min_float, mul_add, mul_mv, mul_mv2,
-    mul_sub, mul_sv, neg, rotate_vector, sub, sub2, Vec2,
+    add, blend2, clamp_float, cross, dot, dot2, max_float, mul_add, mul_mv, mul_mv2, mul_sub,
+    mul_sv, neg, rotate_vector, sub, sub2, Vec2,
 };
 use crate::solver::StepContext;
 
@@ -129,7 +128,7 @@ pub fn push_contacts(
     }
 }
 
-/// Solve contacts: normal, friction, rolling resistance, and restitution.
+/// Solve contacts: normal, friction and rolling resistance.
 /// (b3SolveContacts_Mesh)
 pub fn solve_contacts(
     constraints: &mut [ContactConstraint],
@@ -180,85 +179,45 @@ pub fn solve_contacts(
 
             let mut total_normal_impulse = 0.0;
             let mut total_twist_limit = 0.0;
-            let mut stop_restitution = true;
 
-            // Restitution with more than one point requires iteration to reduce spin.
-            let mut iteration_count = 1;
             for point_index in 0..point_count {
-                if constraint.points[point_index].restitution_velocity > 0.0 {
-                    iteration_count = point_count;
-                    break;
-                }
-            }
+                let cp = &mut constraint.points[point_index];
 
-            let mut velocity_biases = [0.0f32; MAX_MANIFOLD_POINTS];
+                // Fixed anchor points for applying impulses
+                let r_a = cp.r_a;
+                let r_b = cp.r_b;
 
-            for iteration in 0..iteration_count {
-                let accumulate = iteration + 1 == iteration_count;
+                // compute current separation
+                // this is subject to round-off error if the anchor is far from the body center of mass
+                let ds = add(dp, sub(rotate_vector(dq_b, r_b), rotate_vector(dq_a, r_a)));
+                let s = dot(ds, normal) + cp.base_separation;
 
-                for point_index in 0..point_count {
-                    let cp = &mut constraint.points[point_index];
+                // speculative bias, zero when overlapped
+                let velocity_bias = if s > 0.0 { s * inv_h } else { 0.0 };
 
-                    // Fixed anchor points for applying impulses
-                    let r_a = cp.r_a;
-                    let r_b = cp.r_b;
+                // relative normal velocity at contact
+                let vr_a = add(v_a, cross(w_a, r_a));
+                let vr_b = add(v_b, cross(w_b, r_b));
+                let vn = dot(sub(vr_b, vr_a), normal);
 
-                    let velocity_bias;
-                    if iteration == 0 {
-                        // compute current separation
-                        // this is subject to round-off error if the anchor is far from the body center of mass
-                        let ds = add(dp, sub(rotate_vector(dq_b, r_b), rotate_vector(dq_a, r_a)));
-                        let s = dot(ds, normal) + cp.base_separation;
+                // incremental normal impulse
+                let mut delta_impulse = -cp.normal_mass * (vn + velocity_bias);
 
-                        // speculative bias, zero when overlapped
-                        let mut bias = if s > 0.0 { s * inv_h } else { 0.0 };
+                // clamp the accumulated impulse
+                let new_impulse = max_float(cp.normal_impulse + delta_impulse, 0.0);
+                delta_impulse = new_impulse - cp.normal_impulse;
+                cp.normal_impulse = new_impulse;
+                cp.total_normal_impulse += new_impulse;
+                total_normal_impulse += new_impulse;
+                total_twist_limit += cp.lever_arm * new_impulse;
 
-                        // Apply restitution.
-                        if cp.restitution_velocity > 0.0 {
-                            bias = min_float(bias, -cp.restitution_velocity);
-                            stop_restitution = stop_restitution && s > 0.0;
-                        }
+                // apply normal impulse
+                let p = mul_sv(delta_impulse, normal);
+                v_a = mul_sub(v_a, m_a, p);
+                w_a = sub(w_a, mul_mv(i_a, cross(r_a, p)));
 
-                        velocity_biases[point_index] = bias;
-                        velocity_bias = bias;
-                    } else {
-                        velocity_bias = velocity_biases[point_index];
-                    }
-
-                    // relative normal velocity at contact
-                    let vr_a = add(v_a, cross(w_a, r_a));
-                    let vr_b = add(v_b, cross(w_b, r_b));
-                    let vn = dot(sub(vr_b, vr_a), normal);
-
-                    // incremental normal impulse
-                    let mut delta_impulse = -cp.normal_mass * (vn + velocity_bias);
-
-                    // clamp the accumulated impulse
-                    let new_impulse = max_float(cp.normal_impulse + delta_impulse, 0.0);
-                    delta_impulse = new_impulse - cp.normal_impulse;
-                    cp.normal_impulse = new_impulse;
-
-                    if accumulate {
-                        cp.total_normal_impulse += new_impulse;
-                        total_normal_impulse += new_impulse;
-                        total_twist_limit += cp.lever_arm * cp.normal_impulse;
-                    }
-
-                    // apply normal impulse
-                    let p = mul_sv(delta_impulse, normal);
-                    v_a = mul_sub(v_a, m_a, p);
-                    w_a = sub(w_a, mul_mv(i_a, cross(r_a, p)));
-
-                    v_b = mul_add(v_b, m_b, p);
-                    w_b = add(w_b, mul_mv(i_b, cross(r_b, p)));
-                }
-            }
-
-            // Stop restitution once all bouncing points are separated.
-            if stop_restitution {
-                for point_index in 0..point_count {
-                    constraint.points[point_index].restitution_velocity = 0.0;
-                }
+                v_b = mul_add(v_b, m_b, p);
+                w_b = add(w_b, mul_mv(i_b, cross(r_b, p)));
             }
 
             // Central twist friction

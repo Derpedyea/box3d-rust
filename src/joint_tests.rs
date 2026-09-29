@@ -547,3 +547,73 @@ fn test_create_joint_clears_contacts() {
     world.step(1.0 / 60.0, 4);
     assert_eq!(body_get_contact_capacity(&world, body_id_a), 0);
 }
+
+/// Issue #164: a joint with no dynamic body lives in the static set even when one body is an
+/// awake kinematic. Disabling and enabling that body has to respect this, whether the joint was
+/// created that way or got there through body type changes. (TestNonDynamicJointDisable)
+#[test]
+fn test_non_dynamic_joint_disable() {
+    use crate::body::{body_disable, body_enable, body_set_type};
+
+    let mut world_def = default_world_def();
+    world_def.gravity = Vec3 {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
+    let mut world = World::new(&world_def);
+
+    let mut body_def = default_body_def();
+    body_def.type_ = BodyType::Dynamic;
+    let body_id_a = create_body(&mut world, &body_def);
+    body_def.position = Pos {
+        x: 2.0 as _,
+        y: 0.0 as _,
+        z: 0.0 as _,
+    };
+    let body_id_b = create_body(&mut world, &body_def);
+
+    let shape_def = default_shape_def();
+    let box_hull = make_cube_hull(0.5);
+    create_hull_shape(&mut world, body_id_a, &shape_def, &box_hull.base);
+    create_hull_shape(&mut world, body_id_b, &shape_def, &box_hull.base);
+
+    let mut joint_def = default_weld_joint_def();
+    joint_def.base.body_id_a = body_id_a;
+    joint_def.base.body_id_b = body_id_b;
+    let weld_id = create_weld_joint(&mut world, &joint_def);
+
+    body_set_type(&mut world, body_id_a, BodyType::Static);
+    body_set_type(&mut world, body_id_b, BodyType::Kinematic);
+    world.step(1.0 / 60.0, 4);
+
+    body_disable(&mut world, body_id_b);
+    world.step(1.0 / 60.0, 4);
+    body_enable(&mut world, body_id_b);
+    world.step(1.0 / 60.0, 4);
+    assert!(joint_is_valid(&world, weld_id));
+
+    body_set_type(&mut world, body_id_b, BodyType::Dynamic);
+    world.step(1.0 / 60.0, 4);
+    assert!(joint_is_awake(&world, weld_id));
+
+    // Created directly between a static and a kinematic body
+    body_def.type_ = BodyType::Kinematic;
+    body_def.position = Pos {
+        x: 4.0 as _,
+        y: 0.0 as _,
+        z: 0.0 as _,
+    };
+    let body_id_c = create_body(&mut world, &body_def);
+    create_hull_shape(&mut world, body_id_c, &shape_def, &box_hull.base);
+
+    let mut revolute_def = default_revolute_joint_def();
+    revolute_def.base.body_id_a = body_id_a;
+    revolute_def.base.body_id_b = body_id_c;
+    let revolute_id = create_revolute_joint(&mut world, &revolute_def);
+
+    body_disable(&mut world, body_id_c);
+    body_enable(&mut world, body_id_c);
+    world.step(1.0 / 60.0, 4);
+    assert!(!joint_is_awake(&world, revolute_id));
+}

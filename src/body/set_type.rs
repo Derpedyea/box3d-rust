@@ -242,7 +242,9 @@ pub fn body_disable(world: &mut World, body_id: BodyId) {
         }
 
         debug_assert!(
-            world.joints[joint_id as usize].set_index == set_index || set_index == STATIC_SET
+            world.joints[joint_id as usize].set_index == set_index
+                || set_index == STATIC_SET
+                || world.joints[joint_id as usize].set_index == STATIC_SET
         );
 
         unlink_joint(world, joint_id);
@@ -330,8 +332,8 @@ pub fn body_enable(world: &mut World, body_id: BodyId) {
             continue;
         }
 
-        let joint_set_id = if world.bodies[body_a as usize].set_index == STATIC_SET
-            && world.bodies[body_b as usize].set_index == STATIC_SET
+        let joint_set_id = if world.bodies[body_a as usize].type_ != BodyType::Dynamic
+            && world.bodies[body_b as usize].type_ != BodyType::Dynamic
         {
             STATIC_SET
         } else if world.bodies[body_a as usize].set_index == STATIC_SET {

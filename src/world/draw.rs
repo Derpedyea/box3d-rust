@@ -118,7 +118,7 @@ fn shape_debug_color(world: &World, shape_id: i32) -> HexColor {
         HexColor::SLATE_GRAY
     } else if shape.sensor_index != NULL_INDEX {
         HexColor::WHEAT
-    } else if body.flags & body_flags::HAD_TIME_OF_IMPACT != 0 {
+    } else if body_sim.flags & body_flags::HAD_TIME_OF_IMPACT != 0 {
         HexColor::LIME
     } else if (body_sim.flags & body_flags::IS_BULLET != 0) && body.set_index == AWAKE_SET {
         HexColor::TURQUOISE

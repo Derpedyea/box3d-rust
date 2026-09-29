@@ -477,3 +477,62 @@ fn safety_factor_round_trip() {
     while player.step_frame() {}
     assert_eq!(replay_safety_factor(&player, "fastBody"), 0.4);
 }
+
+/// The restitution world setters added to the C `AllOps` session: `WorldSetRestitutionIterations`
+/// (0x0E) and `WorldEnableRestitutionPropagation` (0x0F) are recorded mid-session and the replay
+/// world must end with the same settings and the same state.
+#[test]
+fn restitution_setters_round_trip() {
+    use crate::recording::RecPlayer;
+    use crate::world::{
+        world_enable_restitution_propagation, world_get_restitution_iterations,
+        world_is_restitution_propagation_enabled, world_set_restitution_iterations,
+    };
+
+    let rec = Recording::new(0);
+    let mut world = World::new(&default_world_def());
+    world_start_recording(&mut world, rec);
+
+    let mut ground_def = default_body_def();
+    ground_def.type_ = BodyType::Static;
+    let ground_id = create_body(&mut world, &ground_def);
+    let ground_box = make_box_hull(50.0, 1.0, 50.0);
+    let mut ground_shape_def = default_shape_def();
+    ground_shape_def.base_material.restitution = 0.5;
+    create_hull_shape(&mut world, ground_id, &ground_shape_def, &ground_box.base);
+
+    let mut shape_def = default_shape_def();
+    shape_def.base_material.restitution = 0.8;
+    for i in 0..3 {
+        let mut body_def = default_body_def();
+        body_def.type_ = BodyType::Dynamic;
+        body_def.position = Pos {
+            x: (2.0 * i as f32) as _,
+            y: 3.0,
+            z: 0.0,
+        };
+        let body_id = create_body(&mut world, &body_def);
+        let sphere = Sphere {
+            center: VEC3_ZERO,
+            radius: 0.5,
+        };
+        create_sphere_shape(&mut world, body_id, &shape_def, &sphere);
+    }
+
+    world_set_restitution_iterations(&mut world, 3);
+    world_enable_restitution_propagation(&mut world, true);
+    assert_eq!(world_get_restitution_iterations(&world), 3);
+    assert!(world_is_restitution_propagation_enabled(&world));
+
+    for _ in 0..60 {
+        world.step(1.0 / 60.0, 4);
+    }
+
+    let rec = world_stop_recording(&mut world).expect("recording active");
+    assert!(validate_replay(rec.data(), 1));
+
+    let mut player = RecPlayer::create(rec.data(), 1).expect("player");
+    while player.step_frame() {}
+    assert_eq!(world_get_restitution_iterations(player.world()), 3);
+    assert!(world_is_restitution_propagation_enabled(player.world()));
+}

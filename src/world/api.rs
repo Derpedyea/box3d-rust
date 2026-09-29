@@ -212,6 +212,59 @@ pub fn world_get_restitution_threshold(world: &World) -> f32 {
     world.restitution_threshold
 }
 
+/// Set the number of iterations used by the restitution solver. Clamped to
+/// [`crate::constants::MAX_RESTITUTION_ITERATIONS`]. (b3World_SetRestitutionIterations)
+pub fn world_set_restitution_iterations(world: &mut World, iterations: i32) {
+    debug_assert!(!world.locked);
+    if world.locked {
+        return;
+    }
+
+    let iterations = crate::math_functions::clamp_int(
+        iterations,
+        0,
+        crate::constants::MAX_RESTITUTION_ITERATIONS,
+    );
+    if iterations == world.restitution_iterations {
+        return;
+    }
+
+    crate::recording::capture::rec(world, |rec, wid| {
+        rec.write_world_set_restitution_iterations(wid, iterations);
+    });
+
+    world.restitution_iterations = iterations;
+}
+
+/// Get the number of iterations used by the restitution solver.
+/// (b3World_GetRestitutionIterations)
+pub fn world_get_restitution_iterations(world: &World) -> i32 {
+    world.restitution_iterations
+}
+
+/// Enable restitution propagation. (b3World_EnableRestitutionPropagation)
+pub fn world_enable_restitution_propagation(world: &mut World, flag: bool) {
+    debug_assert!(!world.locked);
+    if world.locked {
+        return;
+    }
+
+    if flag == world.enable_restitution_propagation {
+        return;
+    }
+
+    crate::recording::capture::rec(world, |rec, wid| {
+        rec.write_world_enable_restitution_propagation(wid, flag);
+    });
+
+    world.enable_restitution_propagation = flag;
+}
+
+/// Is restitution propagation enabled? (b3World_IsRestitutionPropagationEnabled)
+pub fn world_is_restitution_propagation_enabled(world: &World) -> bool {
+    world.enable_restitution_propagation
+}
+
 /// Adjust the hit event threshold. (b3World_SetHitEventThreshold)
 pub fn world_set_hit_event_threshold(world: &mut World, value: f32) {
     debug_assert!(!world.locked);
@@ -410,8 +463,9 @@ pub fn world_get_gravity(world: &World) -> Vec3 {
     world.gravity
 }
 
-/// Rebuild the static broad-phase tree. (b3World_RebuildStaticTree)
-pub fn world_rebuild_static_tree(world: &mut World) {
+/// Rebuild the static broad-phase tree. Internal testing hook; upstream removed it from the
+/// public API. (b3World_RebuildStaticTree)
+pub(crate) fn world_rebuild_static_tree(world: &mut World) {
     debug_assert!(!world.locked);
     if world.locked {
         return;

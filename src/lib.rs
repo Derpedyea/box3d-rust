@@ -119,6 +119,7 @@ pub mod rapidhash;
 pub mod recording;
 pub mod sensor;
 pub mod shape;
+pub(crate) mod simd_scalar;
 pub mod solver;
 pub mod solver_set;
 pub mod table;
@@ -263,6 +264,9 @@ mod restitution_tests;
 
 #[cfg(test)]
 mod restitution_tests_extra;
+
+#[cfg(test)]
+mod restitution_tests_energy;
 
 #[cfg(test)]
 mod recording_tests;

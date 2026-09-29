@@ -7,13 +7,10 @@
 //! The logical helpers (`and_w`, `or_w`, comparisons) return `0.0`/`1.0` float
 //! masks rather than bit-wise all-ones masks, exactly like the C scalar path.
 //!
-//! The scalar separating-axis face phase ([`super::separating_axis`]) consumes the
-//! arithmetic and reduction helpers. The comparison, select, and fused helpers
-//! (`and_w`, `or_w`, `blend_w`, `mul_add_w`, `sqrt_w`, `div_w`, `max_w`, `sym_clamp_w`,
-//! `set_w`, `all_zero_w`, `any_true_w`, `equals_w`, `greater_than_w`, `less_than_w`)
-//! back the wide (`b3_simdWidth > 1`) collide path from `convex_manifold.c`, which the
-//! port does not target — the scalar path is the behavioral reference — so they are
-//! retained here as a complete port of the `simd.h` scalar API but currently unused.
+//! The scalar separating-axis face phase (`manifold::separating_axis`) and the wide convex
+//! contact kernels (`contact_solver::wide`) consume these helpers. The rest back the wide
+//! (`b3_simdWidth > 1`) collide path from `convex_manifold.c`, which the port does not
+//! target, and are retained as a complete port of the `simd.h` scalar API.
 //!
 //! SPDX-FileCopyrightText: 2025 Erin Catto
 //! SPDX-License-Identifier: MIT
@@ -51,8 +48,6 @@ pub fn splat_w(scalar: f32) -> FloatW {
 }
 
 /// (b3SetW)
-// SIMD-width (`b3_simdWidth > 1`) collide path, not yet ported.
-#[allow(dead_code)]
 #[inline]
 pub fn set_w(a: f32, b: f32, c: f32, d: f32) -> FloatW {
     FloatW {
@@ -128,8 +123,6 @@ pub fn mul_w(a: FloatW, b: FloatW) -> FloatW {
 }
 
 /// (b3DivW)
-// SIMD-width (`b3_simdWidth > 1`) collide path, not yet ported.
-#[allow(dead_code)]
 #[inline]
 pub fn div_w(a: FloatW, b: FloatW) -> FloatW {
     FloatW {
@@ -141,8 +134,6 @@ pub fn div_w(a: FloatW, b: FloatW) -> FloatW {
 }
 
 /// (b3SqrtW)
-// SIMD-width (`b3_simdWidth > 1`) collide path, not yet ported.
-#[allow(dead_code)]
 #[inline]
 pub fn sqrt_w(a: FloatW) -> FloatW {
     FloatW {
@@ -155,8 +146,6 @@ pub fn sqrt_w(a: FloatW) -> FloatW {
 
 /// `a + b * c`. Cannot use a real FMA because it wouldn't match the non-SIMD path.
 /// (b3MulAddW)
-// SIMD-width (`b3_simdWidth > 1`) collide path, not yet ported.
-#[allow(dead_code)]
 #[inline]
 pub fn mul_add_w(a: FloatW, b: FloatW, c: FloatW) -> FloatW {
     FloatW {
@@ -179,8 +168,6 @@ pub fn min_w(a: FloatW, b: FloatW) -> FloatW {
 }
 
 /// (b3MaxW)
-// SIMD-width (`b3_simdWidth > 1`) collide path, not yet ported.
-#[allow(dead_code)]
 #[inline]
 pub fn max_w(a: FloatW, b: FloatW) -> FloatW {
     FloatW {
@@ -192,8 +179,6 @@ pub fn max_w(a: FloatW, b: FloatW) -> FloatW {
 }
 
 /// Clamp `a` to `[-b, b]`. (b3SymClampW)
-// SIMD-width (`b3_simdWidth > 1`) collide path, not yet ported.
-#[allow(dead_code)]
 #[inline]
 pub fn sym_clamp_w(a: FloatW, b: FloatW) -> FloatW {
     let mut r = FloatW {
@@ -212,8 +197,6 @@ pub fn sym_clamp_w(a: FloatW, b: FloatW) -> FloatW {
 // Logical operations on the scalar path are 0/1 float values. Not bit-wise like SIMD.
 
 /// (b3AndW)
-// SIMD-width (`b3_simdWidth > 1`) collide path, not yet ported.
-#[allow(dead_code)]
 #[inline]
 pub fn and_w(a: FloatW, b: FloatW) -> FloatW {
     FloatW {
@@ -225,8 +208,6 @@ pub fn and_w(a: FloatW, b: FloatW) -> FloatW {
 }
 
 /// (b3OrW)
-// SIMD-width (`b3_simdWidth > 1`) collide path, not yet ported.
-#[allow(dead_code)]
 #[inline]
 pub fn or_w(a: FloatW, b: FloatW) -> FloatW {
     FloatW {
@@ -238,8 +219,6 @@ pub fn or_w(a: FloatW, b: FloatW) -> FloatW {
 }
 
 /// (b3GreaterThanW)
-// SIMD-width (`b3_simdWidth > 1`) collide path, not yet ported.
-#[allow(dead_code)]
 #[inline]
 pub fn greater_than_w(a: FloatW, b: FloatW) -> FloatW {
     FloatW {
@@ -251,8 +230,6 @@ pub fn greater_than_w(a: FloatW, b: FloatW) -> FloatW {
 }
 
 /// (b3LessThanW)
-// SIMD-width (`b3_simdWidth > 1`) collide path, not yet ported.
-#[allow(dead_code)]
 #[inline]
 pub fn less_than_w(a: FloatW, b: FloatW) -> FloatW {
     FloatW {
@@ -264,9 +241,9 @@ pub fn less_than_w(a: FloatW, b: FloatW) -> FloatW {
 }
 
 /// (b3EqualsW)
-// SIMD-width (`b3_simdWidth > 1`) collide path, not yet ported.
-#[allow(dead_code)]
 #[inline]
+// Kept for a complete scalar simd.h API; only the untargeted wide collide path uses it.
+#[allow(dead_code)]
 pub fn equals_w(a: FloatW, b: FloatW) -> FloatW {
     FloatW {
         x: if a.x == b.x { 1.0 } else { 0.0 },
@@ -277,24 +254,18 @@ pub fn equals_w(a: FloatW, b: FloatW) -> FloatW {
 }
 
 /// (b3AllZeroW)
-// SIMD-width (`b3_simdWidth > 1`) collide path, not yet ported.
-#[allow(dead_code)]
 #[inline]
 pub fn all_zero_w(a: FloatW) -> bool {
     a.x == 0.0 && a.y == 0.0 && a.z == 0.0 && a.w == 0.0
 }
 
 /// (b3AnyTrueW)
-// SIMD-width (`b3_simdWidth > 1`) collide path, not yet ported.
-#[allow(dead_code)]
 #[inline]
 pub fn any_true_w(mask: FloatW) -> bool {
     mask.x != 0.0 || mask.y != 0.0 || mask.z != 0.0 || mask.w != 0.0
 }
 
 /// Component-wise `mask ? b : a`. (b3BlendW)
-// SIMD-width (`b3_simdWidth > 1`) collide path, not yet ported.
-#[allow(dead_code)]
 #[inline]
 pub fn blend_w(a: FloatW, b: FloatW, mask: FloatW) -> FloatW {
     FloatW {
@@ -348,4 +319,56 @@ pub fn min_index_w(a: FloatW, bit_count: i32) -> i32 {
 
     let bits = m.to_bits();
     (bits & ((1u32 << bit_count) - 1)) as i32
+}
+
+/// Component-wise absolute value. (b3AbsW, scalar path)
+#[inline]
+pub fn abs_w(a: FloatW) -> FloatW {
+    FloatW {
+        x: if a.x < 0.0 { -a.x } else { a.x },
+        y: if a.y < 0.0 { -a.y } else { a.y },
+        z: if a.z < 0.0 { -a.z } else { a.z },
+        w: if a.w < 0.0 { -a.w } else { a.w },
+    }
+}
+
+/// `a & ~b` as 0/1 masks. (b3AndNotW, scalar path)
+#[inline]
+// Kept for a complete scalar simd.h API; the 79fc559 contact kernels no longer use it.
+#[allow(dead_code)]
+pub fn and_not_w(a: FloatW, b: FloatW) -> FloatW {
+    FloatW {
+        x: if a.x != 0.0 && b.x == 0.0 { 1.0 } else { 0.0 },
+        y: if a.y != 0.0 && b.y == 0.0 { 1.0 } else { 0.0 },
+        z: if a.z != 0.0 && b.z == 0.0 { 1.0 } else { 0.0 },
+        w: if a.w != 0.0 && b.w == 0.0 { 1.0 } else { 0.0 },
+    }
+}
+
+/// Lanes where either base-1 body index is null (0). Used to select the contact softness.
+/// (b3SoftMaskW, scalar path)
+#[inline]
+pub fn soft_mask_w(index_a: &[i32; 4], index_b: &[i32; 4]) -> FloatW {
+    FloatW {
+        x: if index_a[0] == 0 || index_b[0] == 0 {
+            1.0
+        } else {
+            0.0
+        },
+        y: if index_a[1] == 0 || index_b[1] == 0 {
+            1.0
+        } else {
+            0.0
+        },
+        z: if index_a[2] == 0 || index_b[2] == 0 {
+            1.0
+        } else {
+            0.0
+        },
+        w: if index_a[3] == 0 || index_b[3] == 0 {
+            1.0
+        } else {
+            0.0
+        },
+    }
 }

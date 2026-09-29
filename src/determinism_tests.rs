@@ -22,17 +22,17 @@ use crate::world::World;
 // step and the state hash differ from the float build. Both modes are
 // internally deterministic. Values from test_determinism.c.
 #[cfg(feature = "double-precision")]
-const RAGDOLL_SLEEP_STEP: i32 = 272;
+const RAGDOLL_SLEEP_STEP: i32 = 273;
 #[cfg(feature = "double-precision")]
-const RAGDOLL_HASH: u32 = 0xC049_067A;
+const RAGDOLL_HASH: u32 = 0x0F4D_D1EB;
 #[cfg(feature = "double-precision")]
-const WAVE_PILE_SLEEP_STEP: i32 = 323;
+const WAVE_PILE_SLEEP_STEP: i32 = 314;
 #[cfg(feature = "double-precision")]
-const WAVE_PILE_HASH: u32 = 0x2200_A547;
+const WAVE_PILE_HASH: u32 = 0xD9B8_8124;
 #[cfg(feature = "double-precision")]
 const QUERY_SPAWN_SLEEP_STEP: i32 = 242;
 #[cfg(feature = "double-precision")]
-const QUERY_SPAWN_HASH: u32 = 0x1737_F5BC;
+const QUERY_SPAWN_HASH: u32 = 0x9B96_A098;
 #[cfg(feature = "double-precision")]
 const QUERY_SPAWN_HIT_COUNT: i32 = 59;
 #[cfg(feature = "double-precision")]
@@ -43,17 +43,17 @@ const MESH_DROP_SLEEP_STEP: i32 = 217;
 const MESH_DROP_HASH: u32 = 0xCF94_6437;
 
 #[cfg(not(feature = "double-precision"))]
-const RAGDOLL_SLEEP_STEP: i32 = 271;
+const RAGDOLL_SLEEP_STEP: i32 = 274;
 #[cfg(not(feature = "double-precision"))]
-const RAGDOLL_HASH: u32 = 0x8057_19D3;
+const RAGDOLL_HASH: u32 = 0x773A_B8ED;
 #[cfg(not(feature = "double-precision"))]
-const WAVE_PILE_SLEEP_STEP: i32 = 316;
+const WAVE_PILE_SLEEP_STEP: i32 = 330;
 #[cfg(not(feature = "double-precision"))]
-const WAVE_PILE_HASH: u32 = 0xAA7D_15A7;
+const WAVE_PILE_HASH: u32 = 0x205D_6055;
 #[cfg(not(feature = "double-precision"))]
 const QUERY_SPAWN_SLEEP_STEP: i32 = 242;
 #[cfg(not(feature = "double-precision"))]
-const QUERY_SPAWN_HASH: u32 = 0xB9F9_93A5;
+const QUERY_SPAWN_HASH: u32 = 0xF1ED_EF47;
 #[cfg(not(feature = "double-precision"))]
 const QUERY_SPAWN_HIT_COUNT: i32 = 59;
 #[cfg(not(feature = "double-precision"))]

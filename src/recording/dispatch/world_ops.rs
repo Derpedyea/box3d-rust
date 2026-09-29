@@ -162,6 +162,26 @@ pub(super) fn dispatch(
             }
             let _ = (payload_start, payload_size);
         }
+        RecOp::WorldSetRestitutionIterations => {
+            let mut s = rdr.snap();
+            let _world_id = s.world_id();
+            let iterations = s.i32();
+            rdr.sync_from(&s);
+            if rdr.ok {
+                crate::world::world_set_restitution_iterations(world, iterations);
+            }
+            let _ = (payload_start, payload_size);
+        }
+        RecOp::WorldEnableRestitutionPropagation => {
+            let mut s = rdr.snap();
+            let _world_id = s.world_id();
+            let flag = s.bool();
+            rdr.sync_from(&s);
+            if rdr.ok {
+                crate::world::world_enable_restitution_propagation(world, flag);
+            }
+            let _ = (payload_start, payload_size);
+        }
         _ => return false,
     }
     true

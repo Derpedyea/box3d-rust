@@ -628,3 +628,55 @@ fn shape_extents() {
     drop(world);
     destroy_mesh(mesh);
 }
+
+/// b3ShouldBodiesCollide: pairs without a dynamic body never collide, and a joint with
+/// `collide_connected == false` blocks its two bodies.
+#[test]
+fn should_bodies_collide_rules() {
+    use crate::body::{get_body_full_id, should_bodies_collide};
+    use crate::joint::create_weld_joint;
+    use crate::types::default_weld_joint_def;
+
+    let mut world = World::new(&default_world_def());
+
+    let make = |world: &mut World, type_: BodyType, x: f32| {
+        let mut body_def = default_body_def();
+        body_def.type_ = type_;
+        body_def.position.x = x as _;
+        create_body(world, &body_def)
+    };
+
+    let static_id = make(&mut world, BodyType::Static, 0.0);
+    let kinematic_a = make(&mut world, BodyType::Kinematic, 2.0);
+    let kinematic_b = make(&mut world, BodyType::Kinematic, 4.0);
+    let dynamic_a = make(&mut world, BodyType::Dynamic, 6.0);
+    let dynamic_b = make(&mut world, BodyType::Dynamic, 8.0);
+    let dynamic_c = make(&mut world, BodyType::Dynamic, 10.0);
+
+    let mut joint_def = default_weld_joint_def();
+    joint_def.base.body_id_a = dynamic_a;
+    joint_def.base.body_id_b = dynamic_b;
+    joint_def.base.collide_connected = false;
+    create_weld_joint(&mut world, &joint_def);
+
+    let id = |b| get_body_full_id(&world, b);
+
+    assert!(!should_bodies_collide(
+        &world,
+        id(static_id),
+        id(kinematic_a)
+    ));
+    assert!(!should_bodies_collide(
+        &world,
+        id(kinematic_a),
+        id(kinematic_b)
+    ));
+    assert!(should_bodies_collide(&world, id(dynamic_c), id(static_id)));
+    assert!(should_bodies_collide(
+        &world,
+        id(dynamic_c),
+        id(kinematic_a)
+    ));
+    assert!(should_bodies_collide(&world, id(dynamic_a), id(dynamic_c)));
+    assert!(!should_bodies_collide(&world, id(dynamic_a), id(dynamic_b)));
+}

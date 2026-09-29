@@ -109,7 +109,6 @@ pub struct StepContext {
     pub contact_softness: Softness,
     pub static_softness: Softness,
 
-    pub restitution_threshold: f32,
     pub max_linear_velocity: f32,
     pub contact_speed: f32,
 

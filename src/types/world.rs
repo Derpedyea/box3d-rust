@@ -41,6 +41,11 @@ pub struct WorldDef {
     pub gravity: Vec3,
     /// Restitution speed threshold, usually in m/s.
     pub restitution_threshold: f32,
+    /// Number of iterations of the restitution solver. More iterations can lead to less box
+    /// spinning. See [`crate::constants::MAX_RESTITUTION_ITERATIONS`].
+    pub restitution_iterations: i32,
+    /// Enable full contact propagation in the restitution solver. Expensive.
+    pub enable_restitution_propagation: bool,
     /// Hit event speed threshold, usually in m/s.
     pub hit_event_threshold: f32,
     /// Contact stiffness. Cycles per second.
@@ -83,6 +88,8 @@ pub fn default_world_def() -> WorldDef {
             z: 0.0,
         },
         restitution_threshold: 1.0 * length_units,
+        restitution_iterations: 2,
+        enable_restitution_propagation: false,
         hit_event_threshold: 1.0 * length_units,
         contact_hertz: 30.0,
         contact_damping_ratio: 10.0,

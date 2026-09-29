@@ -61,7 +61,7 @@ use crate::id::ShapeId;
 use crate::id_pool::IdPool;
 use crate::island::Island;
 use crate::joint::Joint;
-use crate::math_functions::{Aabb, Vec3};
+use crate::math_functions::{clamp_int, Aabb, Vec3};
 use crate::name_cache::NameCache;
 use crate::sensor::{Sensor, SensorHit, SensorTaskContext};
 use crate::shape::Shape;
@@ -99,6 +99,7 @@ pub struct Profile {
     pub solve_impulses: f32,
     pub integrate_positions: f32,
     pub relax_impulses: f32,
+    pub restitution: f32,
     pub store_impulses: f32,
     pub split_islands: f32,
     pub transforms: f32,
@@ -283,6 +284,8 @@ pub struct World {
     pub gravity: Vec3,
     pub hit_event_threshold: f32,
     pub restitution_threshold: f32,
+    pub restitution_iterations: i32,
+    pub enable_restitution_propagation: bool,
     pub max_linear_speed: f32,
     pub contact_speed: f32,
     pub contact_hertz: f32,
@@ -482,6 +485,12 @@ impl World {
             gravity: def.gravity,
             hit_event_threshold: def.hit_event_threshold,
             restitution_threshold: def.restitution_threshold,
+            restitution_iterations: clamp_int(
+                def.restitution_iterations,
+                0,
+                crate::constants::MAX_RESTITUTION_ITERATIONS,
+            ),
+            enable_restitution_propagation: def.enable_restitution_propagation,
             max_linear_speed: def.maximum_linear_speed,
             contact_speed: def.contact_speed,
             contact_hertz: def.contact_hertz,

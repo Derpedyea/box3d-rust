@@ -81,18 +81,14 @@ fn continuous_query_callback(world: &mut World, ctx: &mut ContinuousContext, sha
         return;
     }
 
-    let other_set = world.bodies[other_body_id as usize].set_index;
-    let other_local = world.bodies[other_body_id as usize].local_index;
-    let other_sim_flags =
-        world.solver_sets[other_set as usize].body_sims[other_local as usize].flags;
-
     let fast_sim = &world.solver_sets[AWAKE_SET as usize].body_sims[ctx.fast_body_sim_index];
     debug_assert!(
         world.bodies[other_body_id as usize].type_ == BodyType::Static
             || (fast_sim.flags & body_flags::IS_BULLET) != 0
     );
 
-    if (other_sim_flags & body_flags::IS_BULLET) != 0 {
+    // Skip bullets
+    if (world.bodies[other_body_id as usize].flags & body_flags::IS_BULLET) != 0 {
         return;
     }
 
@@ -178,8 +174,6 @@ fn continuous_query_callback(world: &mut World, ctx: &mut ContinuousContext, sha
         }
 
         if did_hit {
-            world.solver_sets[AWAKE_SET as usize].body_sims[ctx.fast_body_sim_index].flags |=
-                body_flags::HAD_TIME_OF_IMPACT;
             ctx.fraction = output.fraction;
             ctx.distance_iterations = max_int(ctx.distance_iterations, output.distance_iterations);
             ctx.push_back_iterations =
@@ -309,6 +303,7 @@ pub(super) fn solve_continuous(world: &mut World, body_sim_index: i32, dt: f32) 
             sim.center = center;
             sim.rotation0 = q;
             sim.center0 = center;
+            sim.flags |= body_flags::HAD_TIME_OF_IMPACT;
         }
 
         // Timeloss means there is a lost gravity contribution. Other forces and torques are ignored for now.

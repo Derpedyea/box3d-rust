@@ -1,7 +1,7 @@
 //! SIMD separating axis test from `convex_manifold.c` (`b3ComputeSeparatingAxis`).
 //!
 //! This is the scalar (`B3_SIMD_NONE`) behavioral reference. The face phase runs
-//! through the width-4 `FloatW` helpers from [`super::simd_scalar`] exactly as the C
+//! through the width-4 `FloatW` helpers from [`crate::simd_scalar`] exactly as the C
 //! code does even in scalar mode (`b3GetSupportWide` / `b3NegativeTransformFromSoA`),
 //! while the edge phase uses the purely scalar `#if defined( B3_SIMD_NONE )` branch.
 //! The two must stay bit-identical to the wide path for cross platform determinism.
@@ -12,10 +12,6 @@
 //! SPDX-FileCopyrightText: 2025 Erin Catto
 //! SPDX-License-Identifier: MIT
 
-use super::simd_scalar::{
-    add_w, dot3_w, embed_index_w, load_w, min_index_w, min_w, mul_w, neg_w, splat_w, store_w,
-    sub_w, zero_w,
-};
 use super::types::{AxisQuery, SeparatingAxis, SeparatingFeature};
 use crate::constants::{huge, speculative_distance, PARALLEL_EDGE_TOL};
 use crate::core::NULL_INDEX;
@@ -26,6 +22,10 @@ use crate::hull::{
 use crate::math_functions::{
     aabb_center, aabb_extents, abs, dot, make_matrix_from_quat, max_float, mul_mv, neg, transpose,
     Matrix3, Transform, Vec3, VEC3_ZERO,
+};
+use crate::simd_scalar::{
+    add_w, dot3_w, embed_index_w, load_w, min_index_w, min_w, mul_w, neg_w, splat_w, store_w,
+    sub_w, zero_w,
 };
 
 const HULL_BIT_COUNT: i32 = 7;

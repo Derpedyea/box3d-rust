@@ -1,8 +1,5 @@
 //! Prepare Mesh contact constraints. (b3PrepareContacts_Mesh)
 //!
-//! The Convex kernels prepare exactly the same per-lane data (b3PrepareContacts_Convex), so
-//! both share this scalar builder.
-//!
 //! SPDX-FileCopyrightText: 2025 Erin Catto
 //! SPDX-License-Identifier: MIT
 
@@ -38,7 +35,6 @@ pub fn prepare_one_contact(
     states: &[BodyState],
     context: &StepContext,
     warm_start_scale: f32,
-    neg_restitution_threshold: f32,
 ) -> ContactConstraint {
     let index_a = decode_awake_index(contact.encoded_body_sim_a);
     let index_b = decode_awake_index(contact.encoded_body_sim_b);
@@ -81,14 +77,15 @@ pub fn prepare_one_contact(
         softness,
         rolling_mass: invert_matrix(add_mm(i_a, i_b)),
         friction: contact.friction,
+        restitution: contact.restitution,
         rolling_resistance: contact.rolling_resistance,
         manifold_count,
     };
 
     // Only sample contact point normal velocity if needed.
-    let restitution = contact.restitution;
+    let have_restitution = contact.restitution > 0.0;
     let hit_events = (contact.flags & contact_flags::SIM_ENABLE_HIT_EVENT) != 0;
-    let sample_velocity = restitution > 0.0 || hit_events;
+    let sample_velocity = have_restitution || hit_events;
 
     let mut v_a = VEC3_ZERO;
     let mut w_a = VEC3_ZERO;
@@ -140,6 +137,7 @@ pub fn prepare_one_contact(
                 base_separation: s - dot(sub(mp.anchor_b, mp.anchor_a), normal),
                 normal_impulse: warm_start_scale * mp.normal_impulse,
                 total_normal_impulse: 0.0,
+                restitution_impulse: 0.0,
                 ..ManifoldConstraintPoint::default()
             };
 
@@ -157,14 +155,10 @@ pub fn prepare_one_contact(
                 let vr_b = add(v_b, cross(w_b, r_b));
                 let vn = dot(normal, sub(vr_b, vr_a));
 
-                cp.restitution_velocity = if vn < neg_restitution_threshold {
-                    -restitution * vn
-                } else {
-                    0.0
-                };
+                cp.relative_velocity = vn;
                 mp.normal_velocity = if hit_events { vn } else { 0.0 };
             } else {
-                cp.restitution_velocity = 0.0;
+                cp.relative_velocity = 0.0;
                 mp.normal_velocity = 0.0;
             }
 
@@ -224,58 +218,38 @@ pub fn prepare_one_contact(
     constraint
 }
 
-/// Prepare convex then mesh contacts into one constraint Vec.
-///
-/// Returns the convex prefix length so the solver can dispatch Convex vs Mesh
-/// kernels. Matches C's per-color order: wide/convex blocks then mesh blocks.
-/// (b3PrepareContacts_Convex + b3PrepareContacts_Mesh — serial)
-pub fn prepare_color_contacts(
+/// Prepare the Mesh (and overflow) contact constraints of one graph color. Returns true if any
+/// contact has restitution. (b3PrepareContacts_Mesh — serial)
+pub fn prepare_mesh_contacts(
     constraints: &mut Vec<ContactConstraint>,
-    convex_ids: &[i32],
     mesh_specs: &[crate::contact::ContactSpec],
     contacts: &mut [Contact],
     sims: &[BodySim],
     states: &[BodyState],
     context: &StepContext,
-) -> usize {
+) -> bool {
     let warm_start_scale = if context.enable_warm_starting {
         1.0
     } else {
         0.0
     };
-    let neg_restitution_threshold = -context.restitution_threshold;
+    let mut any_restitution = false;
 
     constraints.clear();
-    constraints.reserve(convex_ids.len() + mesh_specs.len());
-
-    for &contact_id in convex_ids {
-        let contact = &mut contacts[contact_id as usize];
-        debug_assert!(contact.contact_id == contact_id);
-        debug_assert!(contact.manifold_count() == 1);
-        constraints.push(prepare_one_contact(
-            contact,
-            sims,
-            states,
-            context,
-            warm_start_scale,
-            neg_restitution_threshold,
-        ));
-    }
-
-    let convex_count = constraints.len();
+    constraints.reserve(mesh_specs.len());
 
     for spec in mesh_specs {
         let contact = &mut contacts[spec.contact_id as usize];
         debug_assert!(contact.contact_id == spec.contact_id);
+        any_restitution = any_restitution || contact.restitution > 0.0;
         constraints.push(prepare_one_contact(
             contact,
             sims,
             states,
             context,
             warm_start_scale,
-            neg_restitution_threshold,
         ));
     }
 
-    convex_count
+    any_restitution
 }

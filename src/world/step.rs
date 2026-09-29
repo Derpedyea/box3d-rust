@@ -82,7 +82,6 @@ impl World {
             0.5 * self.contact_damping_ratio,
             context.h,
         );
-        context.restitution_threshold = self.restitution_threshold;
         context.max_linear_velocity = self.max_linear_speed;
         context.contact_speed = self.contact_speed;
         context.enable_warm_starting = self.enable_warm_starting;

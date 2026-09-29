@@ -1,4 +1,4 @@
-//! Warm-start Mesh / Convex contact constraints.
+//! Warm-start Mesh contact constraints. (b3WarmStartContacts_Mesh)
 //!
 //! SPDX-FileCopyrightText: 2025 Erin Catto
 //! SPDX-License-Identifier: MIT
@@ -6,16 +6,9 @@
 use super::ContactConstraint;
 use crate::body::{body_flags, BodyState, IDENTITY_BODY_STATE};
 use crate::core::NULL_INDEX;
-use crate::math_functions::{add, cross, mul_add, mul_mv, mul_mv_sym, mul_sub, mul_sv, sub};
+use crate::math_functions::{add, cross, mul_add, mul_mv, mul_sub, mul_sv, sub};
 
-/// `wide_point_count` is the wide constraint point count for the Convex kernel (the maximum over the
-/// four lanes; padded points carry zero data). `None` uses the manifold point count (Mesh).
-fn warm_start_one(
-    contact_constraint: &ContactConstraint,
-    states: &mut [BodyState],
-    use_sym: bool,
-    wide_point_count: Option<usize>,
-) {
+fn warm_start_one(contact_constraint: &ContactConstraint, states: &mut [BodyState]) {
     let index_a = contact_constraint.index_a;
     let index_b = contact_constraint.index_b;
 
@@ -40,14 +33,12 @@ fn warm_start_one(
     let m_b = contact_constraint.inv_mass_b;
     let i_b = contact_constraint.inv_i_b;
 
-    let mul = if use_sym { mul_mv_sym } else { mul_mv };
-
     let manifold_count = contact_constraint.manifold_count;
     for manifold_index in 0..manifold_count as usize {
         let constraint = &contact_constraint.constraints[manifold_index];
 
         let normal = constraint.normal;
-        let point_count = wide_point_count.unwrap_or(constraint.point_count as usize);
+        let point_count = constraint.point_count as usize;
         for j in 0..point_count {
             let cp = &constraint.points[j];
 
@@ -55,9 +46,9 @@ fn warm_start_one(
             let r_b = cp.r_b;
 
             let impulse = mul_sv(cp.normal_impulse, normal);
-            w_a = sub(w_a, mul(i_a, cross(r_a, impulse)));
+            w_a = sub(w_a, mul_mv(i_a, cross(r_a, impulse)));
             v_a = mul_sub(v_a, m_a, impulse);
-            w_b = add(w_b, mul(i_b, cross(r_b, impulse)));
+            w_b = add(w_b, mul_mv(i_b, cross(r_b, impulse)));
             v_b = mul_add(v_b, m_b, impulse);
         }
 
@@ -71,24 +62,24 @@ fn warm_start_one(
                 mul_sv(constraint.friction_impulse.y, constraint.tangent2),
             );
 
-            w_a = sub(w_a, mul(i_a, cross(r_a, impulse)));
+            w_a = sub(w_a, mul_mv(i_a, cross(r_a, impulse)));
             v_a = mul_sub(v_a, m_a, impulse);
-            w_b = add(w_b, mul(i_b, cross(r_b, impulse)));
+            w_b = add(w_b, mul_mv(i_b, cross(r_b, impulse)));
             v_b = mul_add(v_b, m_b, impulse);
         }
 
         // Central twist friction
         {
             let impulse = mul_sv(constraint.twist_impulse, constraint.normal);
-            w_a = sub(w_a, mul(i_a, impulse));
-            w_b = add(w_b, mul(i_b, impulse));
+            w_a = sub(w_a, mul_mv(i_a, impulse));
+            w_b = add(w_b, mul_mv(i_b, impulse));
         }
 
         // Rolling resistance
         {
             let impulse = constraint.rolling_impulse;
-            w_a = sub(w_a, mul(i_a, impulse));
-            w_b = add(w_b, mul(i_b, impulse));
+            w_a = sub(w_a, mul_mv(i_a, impulse));
+            w_b = add(w_b, mul_mv(i_b, impulse));
         }
     }
 
@@ -108,17 +99,6 @@ fn warm_start_one(
 /// (b3WarmStartContacts_Mesh)
 pub fn warm_start_contacts(constraints: &mut [ContactConstraint], states: &mut [BodyState]) {
     for contact_constraint in constraints.iter() {
-        warm_start_one(contact_constraint, states, false, None);
-    }
-}
-
-/// (b3WarmStartContacts_Convex) — SymMatrix inertia multiply. Walks the constraints in C's wide
-/// groups of four so every lane runs the wide point count.
-pub fn warm_start_contacts_convex(constraints: &mut [ContactConstraint], states: &mut [BodyState]) {
-    for group in constraints.chunks(super::solve_convex::SIMD_WIDTH) {
-        let point_count = super::solve_convex::wide_point_count(group);
-        for contact_constraint in group.iter() {
-            warm_start_one(contact_constraint, states, true, Some(point_count));
-        }
+        warm_start_one(contact_constraint, states);
     }
 }

@@ -357,7 +357,9 @@ impl DynamicTree {
             stack_count += 1;
         } else {
             let mut node = root;
-            node.flag_index &= !MOVED_NODE;
+            if !full_build {
+                node.flag_index &= !MOVED_NODE;
+            }
             self.leaf_indices[0] = 0;
             self.leaf_nodes[0] = node;
             self.leaf_centers[0] = aabb_center(node.aabb);
@@ -377,7 +379,9 @@ impl DynamicTree {
                     continue;
                 }
 
-                node.flag_index &= !MOVED_NODE;
+                if !full_build {
+                    node.flag_index &= !MOVED_NODE;
+                }
                 self.leaf_indices[leaf_count] = leaf_count as i32;
                 self.leaf_nodes[leaf_count] = node;
                 self.leaf_centers[leaf_count] = aabb_center(node.aabb);
@@ -396,7 +400,9 @@ impl DynamicTree {
         self.dfs_ordered = true;
 
         self.validate();
-        self.validate_no_moved();
+        if !full_build {
+            self.validate_no_moved();
+        }
 
         leaf_count as i32
     }

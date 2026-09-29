@@ -115,8 +115,8 @@ pub fn sync_body_flags(world: &mut World, body_index: i32) {
     {
         let sim = get_body_sim_mut(world, body_index);
 
-        // Preserve the fast flag for contact recycling.
-        sim.flags = (sim.flags & body_flags::IS_FAST) | flags;
+        // Preserve the sim only flags: fast for contact recycling, time of impact for debug draw.
+        sim.flags = (sim.flags & (body_flags::IS_FAST | body_flags::HAD_TIME_OF_IMPACT)) | flags;
     }
     if let Some(local_index) = get_body_state_index(world, body_index) {
         world.solver_sets[AWAKE_SET as usize].body_states[local_index as usize].flags = flags;
@@ -127,6 +127,10 @@ pub fn sync_body_flags(world: &mut World, body_index: i32) {
 pub fn should_bodies_collide(world: &World, body_id_a: i32, body_id_b: i32) -> bool {
     let body_a = &world.bodies[body_id_a as usize];
     let body_b = &world.bodies[body_id_b as usize];
+
+    if body_a.type_ != BodyType::Dynamic && body_b.type_ != BodyType::Dynamic {
+        return false;
+    }
 
     let (mut joint_key, other_body_id) = if body_a.joint_count < body_b.joint_count {
         (body_a.head_joint_key, body_b.id)
