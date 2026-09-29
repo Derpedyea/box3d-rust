@@ -15,6 +15,9 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The demo's tests embed mesh files from the C reference submodule.
+          submodules: true
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
