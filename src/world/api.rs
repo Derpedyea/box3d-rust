@@ -641,8 +641,10 @@ pub fn world_get_worker_count(world: &World) -> i32 {
     world.worker_count
 }
 
-/// Begin capturing mutations into `recording`. (b3World_StartRecording)
-pub fn world_start_recording(world: &mut World, recording: &mut crate::recording::Recording) {
+/// Begin capturing mutations into `recording`, which the world owns until
+/// [`world_stop_recording`] returns it. If a session is already active the
+/// new recording is dropped. (b3World_StartRecording)
+pub fn world_start_recording(world: &mut World, recording: crate::recording::Recording) {
     debug_assert!(world.recording.is_none());
     if world.recording.is_some() {
         return;
@@ -650,7 +652,8 @@ pub fn world_start_recording(world: &mut World, recording: &mut crate::recording
     crate::recording::start_recording(world, recording);
 }
 
-/// Finalize the active recording. (b3World_StopRecording)
-pub fn world_stop_recording(world: &mut World) {
-    crate::recording::stop_recording(world);
+/// Finalize the active recording and return it, or `None` if no session was
+/// active. (b3World_StopRecording)
+pub fn world_stop_recording(world: &mut World) -> Option<crate::recording::Recording> {
+    crate::recording::stop_recording(world)
 }

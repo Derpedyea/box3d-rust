@@ -122,17 +122,17 @@ fn check_replay_names(player: &RecPlayer) {
 // and confirm every body and shape name resolves on the reconstructed replay world. (NameRoundTrip)
 #[test]
 fn name_round_trip() {
-    let mut rec = Recording::new(0);
+    let rec = Recording::new(0);
 
     let mut world = World::new(&default_world_def());
     build_named_scene(&mut world);
 
     // Record from a snapshot of the populated world, so names ride in the frame-0 image.
-    world_start_recording(&mut world, &mut rec);
+    world_start_recording(&mut world, rec);
     for _ in 0..20 {
         world.step(1.0 / 60.0, 4);
     }
-    world_stop_recording(&mut world);
+    let rec = world_stop_recording(&mut world).expect("recording active");
     drop(world);
 
     assert!(validate_replay(rec.data(), 1));
@@ -148,7 +148,7 @@ fn name_round_trip() {
 // (RollbackNames)
 #[test]
 fn rollback_names() {
-    let mut rec = Recording::new(0);
+    let rec = Recording::new(0);
 
     let mut world = World::new(&default_world_def());
     build_named_scene(&mut world);
@@ -157,12 +157,12 @@ fn rollback_names() {
     for _ in 0..10 {
         world.step(1.0 / 60.0, 4);
     }
-    world_start_recording(&mut world, &mut rec);
+    world_start_recording(&mut world, rec);
     let total_frames = 80;
     for _ in 0..total_frames {
         world.step(1.0 / 60.0, 4);
     }
-    world_stop_recording(&mut world);
+    let rec = world_stop_recording(&mut world).expect("recording active");
     drop(world);
 
     let mut player = RecPlayer::create(rec.data(), 1).expect("player");

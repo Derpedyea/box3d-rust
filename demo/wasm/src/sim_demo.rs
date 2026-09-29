@@ -62,8 +62,6 @@ pub(crate) struct SimState {
     pub(crate) world: World,
     pub(crate) bodies: Vec<SimBody>,
     pub(crate) grab: MouseGrab,
-    /// Owns the active recording buffer; world holds a raw pointer into it.
-    recording: Option<Box<Recording>>,
     record_start_step: i32,
     step_count: i32,
     /// Bullet vs Stack projectile body index, or -1 when none (C `m_bulletId`).
@@ -84,7 +82,6 @@ pub(crate) fn new_sim() -> SimState {
         world: new_world(),
         bodies: Vec::new(),
         grab: MouseGrab::default(),
-        recording: None,
         record_start_step: 0,
         step_count: 0,
         bullet_body_index: -1,
@@ -95,10 +92,8 @@ pub(crate) fn new_sim() -> SimState {
 }
 
 pub(crate) fn stop_recording_if_any(sim: &mut SimState) {
-    if sim.recording.is_some() {
-        stop_recording(&mut sim.world);
-        sim.recording = None;
-    }
+    // The world owns the active recording; dropping the returned buffer discards it.
+    stop_recording(&mut sim.world);
 }
 
 pub(crate) fn with_sim<R>(f: impl FnOnce(&mut SimState) -> R) -> R {
@@ -729,37 +724,31 @@ pub fn sim_set_recycle_distance(meters: f32) {
 pub fn sim_start_recording() {
     with_sim(|sim| {
         stop_recording_if_any(sim);
-        let mut rec = Box::new(Recording::new(0));
-        start_recording(&mut sim.world, &mut rec);
+        start_recording(&mut sim.world, Recording::new(0));
         sim.record_start_step = sim.step_count;
-        sim.recording = Some(rec);
     });
 }
 
 /// Stop recording and return the `.b3rec` bytes (empty if not recording).
 #[wasm_bindgen]
 pub fn sim_stop_recording() -> Vec<u8> {
-    with_sim(|sim| {
-        if sim.recording.is_none() {
-            return Vec::new();
-        }
-        stop_recording(&mut sim.world);
-        let rec = sim.recording.take().expect("recording present");
-        rec.data().to_vec()
+    with_sim(|sim| match stop_recording(&mut sim.world) {
+        Some(rec) => rec.data().to_vec(),
+        None => Vec::new(),
     })
 }
 
 /// True while a recording session is active.
 #[wasm_bindgen]
 pub fn sim_is_recording() -> bool {
-    with_sim(|sim| sim.recording.is_some())
+    with_sim(|sim| sim.world.recording.is_some())
 }
 
 /// Step index when the current recording started (0 if idle).
 #[wasm_bindgen]
 pub fn sim_record_start_step() -> i32 {
     with_sim(|sim| {
-        if sim.recording.is_some() {
+        if sim.world.recording.is_some() {
             sim.record_start_step
         } else {
             0

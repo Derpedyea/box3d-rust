@@ -15,10 +15,10 @@ use crate::world::{world_set_gravity, world_start_recording, world_stop_recordin
 /// Sphere round-trip: record/step/stop, then replay and validate. (SphereRoundTrip)
 #[test]
 fn sphere_round_trip() {
-    let mut rec = Recording::new(0);
+    let rec = Recording::new(0);
     let mut world = World::new(&default_world_def());
 
-    world_start_recording(&mut world, &mut rec);
+    world_start_recording(&mut world, rec);
 
     world_set_gravity(
         &mut world,
@@ -60,7 +60,7 @@ fn sphere_round_trip() {
         world.step(time_step, sub_step_count);
     }
 
-    world_stop_recording(&mut world);
+    let rec = world_stop_recording(&mut world).expect("recording active");
 
     assert!(validate_replay(rec.data(), 1));
 }
@@ -68,10 +68,10 @@ fn sphere_round_trip() {
 /// Empty world: start/stop with no ops beyond seed hash. (EmptyWorldRoundTrip)
 #[test]
 fn empty_world_round_trip() {
-    let mut rec = Recording::new(0);
+    let rec = Recording::new(0);
     let mut world = World::new(&default_world_def());
-    world_start_recording(&mut world, &mut rec);
-    world_stop_recording(&mut world);
+    world_start_recording(&mut world, rec);
+    let rec = world_stop_recording(&mut world).expect("recording active");
     assert!(rec.size() >= 48);
     assert_eq!(
         u32::from_le_bytes(rec.data()[0..4].try_into().unwrap()),
@@ -127,9 +127,9 @@ fn hull_dedup() {
     ];
     let hull = create_hull(&pts, 8).expect("hull");
 
-    let mut rec = Recording::new(0);
+    let rec = Recording::new(0);
     let mut world = World::new(&default_world_def());
-    world_start_recording(&mut world, &mut rec);
+    world_start_recording(&mut world, rec);
 
     let mut shape_def = default_shape_def();
     shape_def.density = 1.0;
@@ -151,7 +151,7 @@ fn hull_dedup() {
         world.step(time_step, 4);
     }
 
-    world_stop_recording(&mut world);
+    let rec = world_stop_recording(&mut world).expect("recording active");
 
     assert!(validate_replay(rec.data(), 1));
 
@@ -201,14 +201,14 @@ fn mid_stream_no_contacts() {
         world.step(time_step, sub_step_count);
     }
 
-    let mut rec = Recording::new(0);
-    world_start_recording(&mut world, &mut rec);
+    let rec = Recording::new(0);
+    world_start_recording(&mut world, rec);
 
     for _ in 0..30 {
         world.step(time_step, sub_step_count);
     }
 
-    world_stop_recording(&mut world);
+    let rec = world_stop_recording(&mut world).expect("recording active");
     assert!(validate_replay(rec.data(), 1));
 }
 
@@ -256,14 +256,14 @@ fn mid_stream_contacts() {
         world.step(time_step, sub_step_count);
     }
 
-    let mut rec = Recording::new(0);
-    world_start_recording(&mut world, &mut rec);
+    let rec = Recording::new(0);
+    world_start_recording(&mut world, rec);
 
     for _ in 0..30 {
         world.step(time_step, sub_step_count);
     }
 
-    world_stop_recording(&mut world);
+    let rec = world_stop_recording(&mut world).expect("recording active");
     assert!(validate_replay(rec.data(), 1));
 }
 

@@ -16,7 +16,7 @@ use crate::id::ShapeId;
 use crate::math_functions::{is_valid_vec3, safe_scale, Vec3};
 use crate::mesh::{is_valid_mesh, MeshData};
 use crate::world::World;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// (b3Shape_GetSphere)
 pub fn shape_get_sphere(world: &World, shape_id: ShapeId) -> Sphere {
@@ -166,8 +166,8 @@ pub fn shape_set_hull(world: &mut World, shape_id: ShapeId, hull: &HullData) {
 
     // Same shared hull — avoid destroying contacts and recreating the proxy.
     if let ShapeGeometry::Hull(existing) = &world.shapes[index as usize].geometry {
-        if Rc::ptr_eq(existing, &data) {
-            // Drop the extra Rc from add(); do not release from the database.
+        if Arc::ptr_eq(existing, &data) {
+            // Drop the extra Arc from add(); do not release from the database.
             drop(data);
             world.locked = false;
             return;

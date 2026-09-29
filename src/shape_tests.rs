@@ -15,7 +15,7 @@ use crate::shape::{
 };
 use crate::types::{default_body_def, default_shape_def, default_world_def, BodyType};
 use crate::world::World;
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[test]
 fn hull_database_sharing() {
@@ -56,13 +56,13 @@ fn hull_database_sharing() {
     let got_d = shape_get_hull(&world, shape_d).unwrap() as *const _;
     {
         let shared_rc = match &world.shapes[(shape_d.index1 - 1) as usize].geometry {
-            ShapeGeometry::Hull(rc) => Rc::clone(rc),
+            ShapeGeometry::Hull(rc) => Arc::clone(rc),
             _ => panic!("expected hull"),
         };
         shape_set_hull(&mut world, shape_d, shared_rc.as_ref());
         let still_d = shape_get_hull(&world, shape_d).unwrap() as *const _;
         assert_eq!(still_d, got_d);
-        // Drop the temporary Rc so destroy_shape's release sees strong_count == 2.
+        // Drop the temporary Arc so destroy_shape's release sees strong_count == 2.
     }
     destroy_shape(&mut world, shape_d, true);
 
@@ -103,7 +103,7 @@ fn hull_create_updates_mass_and_proxy() {
     assert!(world.shapes[raw].proxy_key != NULL_INDEX);
 
     if let ShapeGeometry::Hull(rc) = &world.shapes[raw].geometry {
-        assert!(Rc::strong_count(rc) >= 2);
+        assert!(Arc::strong_count(rc) >= 2);
     } else {
         panic!("expected hull geometry");
     }

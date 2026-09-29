@@ -12,7 +12,7 @@ fn query_replay() {
         world_collide_mover, world_overlap_aabb, world_overlap_shape,
     };
 
-    let mut rec = Recording::new(0);
+    let rec = Recording::new(0);
     let mut world = World::new(&default_world_def());
     world_set_gravity(
         &mut world,
@@ -47,7 +47,7 @@ fn query_replay() {
         create_sphere_shape(&mut world, body_id, &sphere_def, &sphere);
     }
 
-    world_start_recording(&mut world, &mut rec);
+    world_start_recording(&mut world, rec);
 
     let filter = default_query_filter();
     for _ in 0..30 {
@@ -116,7 +116,7 @@ fn query_replay() {
         world.step(1.0 / 60.0, 4);
     }
 
-    world_stop_recording(&mut world);
+    let rec = world_stop_recording(&mut world).expect("recording active");
     assert!(validate_replay(rec.data(), 1));
 
     let mut player = RecPlayer::create(rec.data(), 1).expect("player");
@@ -146,7 +146,7 @@ fn tagged_query() {
     use crate::types::default_query_filter;
     use crate::world::{world_cast_ray, world_overlap_aabb};
 
-    let mut rec = Recording::new(0);
+    let rec = Recording::new(0);
     let mut world = World::new(&default_world_def());
 
     let mut ground_def = default_body_def();
@@ -155,7 +155,7 @@ fn tagged_query() {
     let ground_box = make_box_hull(20.0, 1.0, 20.0);
     create_hull_shape(&mut world, ground_id, &default_shape_def(), &ground_box.base);
 
-    world_start_recording(&mut world, &mut rec);
+    world_start_recording(&mut world, rec);
 
     let mut bullet53 = default_query_filter();
     bullet53.id = 53;
@@ -211,7 +211,7 @@ fn tagged_query() {
         world.step(1.0 / 60.0, 4);
     }
 
-    world_stop_recording(&mut world);
+    let rec = world_stop_recording(&mut world).expect("recording active");
     assert!(validate_replay(rec.data(), 1));
 
     let mut player = RecPlayer::create(rec.data(), 1).expect("player");
@@ -248,7 +248,7 @@ fn tagged_query() {
 fn scrub_backward() {
     use crate::recording::{hash_world_state, RecPlayer};
 
-    let mut rec = Recording::new(0);
+    let rec = Recording::new(0);
     let mut world = World::new(&default_world_def());
     world_set_gravity(
         &mut world,
@@ -258,7 +258,7 @@ fn scrub_backward() {
             z: 0.0,
         },
     );
-    world_start_recording(&mut world, &mut rec);
+    world_start_recording(&mut world, rec);
 
     {
         let mut ground_def = default_body_def();
@@ -287,7 +287,7 @@ fn scrub_backward() {
     for _ in 0..total_frames {
         world.step(1.0 / 60.0, 4);
     }
-    world_stop_recording(&mut world);
+    let rec = world_stop_recording(&mut world).expect("recording active");
 
     let mut player = RecPlayer::create(rec.data(), 1).expect("player");
     assert_eq!(player.get_frame_count(), total_frames);
@@ -370,7 +370,7 @@ fn seek_with_hull() {
     ];
     let hull = create_hull(&pts, 8).expect("hull");
 
-    let mut rec = Recording::new(0);
+    let rec = Recording::new(0);
     let mut world = World::new(&default_world_def());
     world_set_gravity(
         &mut world,
@@ -380,7 +380,7 @@ fn seek_with_hull() {
             z: 0.0,
         },
     );
-    world_start_recording(&mut world, &mut rec);
+    world_start_recording(&mut world, rec);
 
     {
         let mut ground_def = default_body_def();
@@ -408,7 +408,7 @@ fn seek_with_hull() {
     for _ in 0..total_frames {
         world.step(1.0 / 60.0, 4);
     }
-    world_stop_recording(&mut world);
+    let rec = world_stop_recording(&mut world).expect("recording active");
 
     let mut player = RecPlayer::create(rec.data(), 1).expect("player");
     while !player.is_at_end() {
@@ -466,14 +466,14 @@ fn player_accessors() {
         world.step(1.0 / 60.0, 4);
     }
 
-    let mut rec = Recording::new(0);
-    world_start_recording(&mut world, &mut rec);
+    let rec = Recording::new(0);
+    world_start_recording(&mut world, rec);
     let total_frames = 80;
     let sub_step_count = 4;
     for _ in 0..total_frames {
         world.step(1.0 / 60.0, sub_step_count);
     }
-    world_stop_recording(&mut world);
+    let rec = world_stop_recording(&mut world).expect("recording active");
 
     let mut player = RecPlayer::create(rec.data(), 1).expect("player");
     let info = player.get_info();
@@ -520,9 +520,9 @@ fn player_accessors() {
 /// Reserved header bytes are ignored by validate. (ReservedHeaderBytes)
 #[test]
 fn reserved_header_bytes() {
-    let mut rec = Recording::new(0);
+    let rec = Recording::new(0);
     let mut world = World::new(&default_world_def());
-    world_start_recording(&mut world, &mut rec);
+    world_start_recording(&mut world, rec);
     world_set_gravity(
         &mut world,
         Vec3 {
@@ -534,7 +534,7 @@ fn reserved_header_bytes() {
     for _ in 0..5 {
         world.step(1.0 / 60.0, 4);
     }
-    world_stop_recording(&mut world);
+    let rec = world_stop_recording(&mut world).expect("recording active");
 
     let mut patched = rec.data().to_vec();
     patched[11] = 0xAB;
@@ -596,9 +596,9 @@ fn shape_name_replay() {
         "abcdefghijklmnopqrstuvwxyz",
     ];
 
-    let mut rec = Recording::new(0);
+    let rec = Recording::new(0);
     let mut world = World::new(&default_world_def());
-    world_start_recording(&mut world, &mut rec);
+    world_start_recording(&mut world, rec);
 
     let sphere = Sphere {
         center: VEC3_ZERO,
@@ -631,7 +631,7 @@ fn shape_name_replay() {
     for _ in 0..5 {
         world.step(1.0 / 60.0, 4);
     }
-    world_stop_recording(&mut world);
+    let rec = world_stop_recording(&mut world).expect("recording active");
     assert!(validate_replay(rec.data(), 1));
 
     let mut player = RecPlayer::create(rec.data(), 1).expect("player");

@@ -22,7 +22,7 @@ use crate::math_functions::{
 };
 use crate::shape::{shape_flags, Shape, ShapeGeometry};
 use crate::world::World;
-use std::rc::Rc;
+use std::sync::Arc;
 
 fn convex_cache(geometry: &mut ContactGeometry) -> &mut ContactCache {
     match geometry {
@@ -529,7 +529,7 @@ fn update_compound_contact(
             }
         }
         ChildGeometry::Hull(h) => {
-            let child_geom = ShapeGeometry::Hull(Rc::new(h.clone()));
+            let child_geom = ShapeGeometry::Hull(Arc::new(h.clone()));
             let xf_child = mul_world_transforms(xf_a, child_transform);
             update_convex_contact(
                 world,

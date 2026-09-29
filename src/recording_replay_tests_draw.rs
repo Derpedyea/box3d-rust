@@ -75,9 +75,9 @@ fn debug_shape_callbacks() {
 
     // Build the recording: gravity, a static ground box, and four dynamic boxes sharing one hull.
     // Ground + 4 boxes = 5 shapes total, matching the C fixture.
-    let mut rec = Recording::new(0);
+    let rec = Recording::new(0);
     let mut world = World::new(&default_world_def());
-    world_start_recording(&mut world, &mut rec);
+    world_start_recording(&mut world, rec);
     world_set_gravity(
         &mut world,
         Vec3 {
@@ -112,7 +112,7 @@ fn debug_shape_callbacks() {
     for _ in 0..total_frames {
         world.step(1.0 / 60.0, 4);
     }
-    world_stop_recording(&mut world);
+    let rec = world_stop_recording(&mut world).expect("recording active");
 
     // Rust has no b3SaveRecordingToFile; sibling player tests replay from `rec.data()` in-memory.
     // `counters` is declared before `player` so the player (and its world holding the context

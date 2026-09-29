@@ -51,9 +51,9 @@ fn corrupt_registry_slot(data: &[u8], slot: usize) -> Vec<u8> {
 /// kind, plus the hull and mesh setters. Each op interns its own registry slot, so the
 /// caller can corrupt exactly one dispatch arm at a time.
 fn record_all_geometry_ops() -> Recording {
-    let mut rec = Recording::new(0);
+    let rec = Recording::new(0);
     let mut world = World::new(&default_world_def());
-    world_start_recording(&mut world, &mut rec);
+    world_start_recording(&mut world, rec);
 
     let mut static_def = default_body_def();
     static_def.type_ = BodyType::Static;
@@ -160,8 +160,7 @@ fn record_all_geometry_ops() -> Recording {
     crate::shape::shape_set_mesh(&mut world, mesh_shape, &mesh_b, one);
 
     world.step(1.0 / 60.0, 4);
-    world_stop_recording(&mut world);
-    rec
+    world_stop_recording(&mut world).expect("recording active")
 }
 
 /// Every geometry-carrying shape op must fail the replay instead of panicking when its

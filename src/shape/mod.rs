@@ -22,7 +22,7 @@ use crate::hull::HullData;
 use crate::math_functions::{Aabb, Vec3, BOUNDS3_EMPTY, VEC3_ONE, VEC3_ZERO};
 use crate::mesh::MeshData;
 use crate::types::{Filter, QueryFilter};
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// Shape flag bits. (enum b3ShapeFlags)
 pub mod shape_flags {
@@ -41,7 +41,7 @@ pub enum ShapeGeometry {
     Capsule(Capsule),
     Sphere(Sphere),
     /// Shared hull from the world hull database. (C: `const b3HullData* hull`)
-    Hull(Rc<HullData>),
+    Hull(Arc<HullData>),
     /// Mesh data plus per-instance scale (C: `b3Mesh { data*, scale }`).
     Mesh {
         data: MeshData,

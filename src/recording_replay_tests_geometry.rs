@@ -16,21 +16,22 @@ use crate::shape::{
 
 /// A box sliding across a mesh floor, with the option to swap both geometries and retune a
 /// per-triangle material part way through. Returns the final state hash so the caller can prove the
-/// mutations move the simulation. Recording is optional so the same scene serves as the control.
+/// mutations move the simulation, plus the finalized recording when one was passed in. Recording is
+/// optional so the same scene serves as the control.
 ///
 /// `repeat_hull` doubles the b3Shape_SetHull call so the caller can prove the shared hull short
 /// circuit leaves the stream alone. The C suite asserts that in `AllOps` instead, where the whole
 /// stream is exercised at once; the Rust port has no `AllOps`, so the check rides here.
 /// (RunGeometryMutatorScene)
 fn run_geometry_mutator_scene(
-    rec: Option<&mut Recording>,
+    rec: Option<Recording>,
     mutate: bool,
     repeat_hull: bool,
     mesh_a: &MeshData,
     mesh_b: &MeshData,
     swap_hull: &HullData,
     swap_friction: f32,
-) -> u64 {
+) -> (u64, Option<Recording>) {
     let mut world = World::new(&default_world_def());
 
     let recording = rec.is_some();
@@ -113,11 +114,13 @@ fn run_geometry_mutator_scene(
 
     let hash = hash_world_state(&world);
 
-    if recording {
-        world_stop_recording(&mut world);
-    }
+    let finished = if recording {
+        world_stop_recording(&mut world)
+    } else {
+        None
+    };
 
-    hash
+    (hash, finished)
 }
 
 /// Swapping a shape's hull or mesh, or retuning one of its per-triangle materials, is a world
@@ -137,7 +140,7 @@ fn shape_geometry_mutator_replay() {
     let swap_hull = make_box_hull(0.25, 1.5, 0.25);
     let swap_friction = 0.95;
 
-    let control_hash = run_geometry_mutator_scene(
+    let (control_hash, _) = run_geometry_mutator_scene(
         None,
         false,
         false,
@@ -147,9 +150,8 @@ fn shape_geometry_mutator_replay() {
         swap_friction,
     );
 
-    let mut rec = Recording::new(0);
-    let mutated_hash = run_geometry_mutator_scene(
-        Some(&mut rec),
+    let (mutated_hash, rec) = run_geometry_mutator_scene(
+        Some(Recording::new(0)),
         true,
         true,
         &mesh_a,
@@ -157,6 +159,8 @@ fn shape_geometry_mutator_replay() {
         &swap_hull.base,
         swap_friction,
     );
+
+    let rec = rec.expect("recording active");
 
     // Without this the replay gate below could pass on a recording that never carried the ops.
     assert_ne!(mutated_hash, control_hash);
@@ -203,9 +207,8 @@ fn shape_geometry_mutator_replay() {
 
     // The shared hull short circuit must not have written a second op: the stream recorded without
     // the repeat has to match byte for byte.
-    let mut single_rec = Recording::new(0);
-    let single_hash = run_geometry_mutator_scene(
-        Some(&mut single_rec),
+    let (single_hash, single_rec) = run_geometry_mutator_scene(
+        Some(Recording::new(0)),
         true,
         false,
         &mesh_a,
@@ -214,6 +217,7 @@ fn shape_geometry_mutator_replay() {
         swap_friction,
     );
     assert_eq!(single_hash, mutated_hash);
+    let single_rec = single_rec.expect("recording active");
     assert_eq!(single_rec.size(), size);
     assert_eq!(single_rec.data(), rec.data());
 }

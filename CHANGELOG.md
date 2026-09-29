@@ -26,9 +26,21 @@ this port follows its API and behavior.
   `hash_hull_data` returns the content hash directly.
 - Shape creation now rejects geometry with mismatched version constants at
   runtime.
+- The world now owns an active recording (#1).
+  `world_start_recording(world, recording: Recording)` and
+  `recording::start_recording` take the `Recording` by value, and
+  `world_stop_recording(world)` / `recording::stop_recording` return the
+  finalized `Option<Recording>`. The world previously held a raw pointer to
+  a caller-owned `Recording`, which was unsound if the caller moved or dropped
+  it mid-session. `World::recording` is now
+  `Option<Box<RefCell<Recording>>>`.
+- Shared hull geometry is now `Arc<HullData>` instead of `Rc<HullData>`
+  (`ShapeGeometry::Hull`, the world hull database).
 
 ### Changed
 
+- `World` is now `Send`, so a world can be built on one thread and moved to
+  another (#1).
 - Simplified face-vs-edge contact selection in the hull-capsule and
   triangle-capsule manifolds, matching upstream.
 

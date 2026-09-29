@@ -490,3 +490,11 @@ fn test_custom_filter_reads_shape_user_data() {
         "allowed pair should separate, got speed {allowed_speed}"
     );
 }
+
+/// `World` must be `Send` so it can be moved to another thread (issue #1).
+/// Compile-time check: this test fails to build if any field is `!Send`.
+#[test]
+fn world_is_send() {
+    fn assert_send<T: Send>() {}
+    assert_send::<World>();
+}

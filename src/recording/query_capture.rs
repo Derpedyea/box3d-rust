@@ -230,10 +230,10 @@ pub fn world_id(world: &World) -> WorldId {
 
 /// Commit a finished query writer into the active recording session.
 pub fn commit(world: &World, writer: QueryWriter, opcode: RecOp) {
-    let Some(rec_ptr) = world.recording else {
+    let Some(rec) = world.recording.as_deref() else {
         return;
     };
-    // SAFETY: pointer set by start_recording; exclusive while session active.
-    let rec = unsafe { &mut *rec_ptr };
-    writer.commit(rec, opcode);
+    // Queries take `&World`; the borrow is held only for this append, never
+    // across user callbacks, so it cannot conflict.
+    writer.commit(&mut rec.borrow_mut(), opcode);
 }

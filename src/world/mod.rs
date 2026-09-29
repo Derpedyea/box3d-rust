@@ -25,7 +25,7 @@
 //!   a pooled allocator can return later if profiling warrants it.
 //! - Scheduler/task-system fields are deferred with the single-threaded port;
 //!   `worker_count` is kept and clamped like C.
-//! - Hull database is a content-keyed `Rc` store (verstable map in C).
+//! - Hull database is a content-keyed `Arc` store (verstable map in C).
 //! - Pre-solve and custom-filter callbacks keep the C shape as `Option<fn>` with
 //!   a `u64` context.
 //!
@@ -326,10 +326,17 @@ pub struct World {
     pub enable_speculative: bool,
     pub in_use: bool,
 
-    /// Non-null while a recording session is active. Set by
-    /// [`crate::recording::start_recording`], cleared by
+    /// Present while a recording session is active. Set by
+    /// [`crate::recording::start_recording`], taken back by
     /// [`crate::recording::stop_recording`]. (world->recording)
-    pub recording: Option<*mut crate::recording::Recording>,
+    ///
+    /// C holds a borrowed `b3Recording*`. Rust owns the recording for the
+    /// session instead: a stored raw pointer would let the caller move or drop
+    /// the recording mid-session (unsound), and would make `World` `!Send`.
+    /// The `RefCell` lets the `&World` query functions append their records,
+    /// which C does through the mutable pointer; mutators reach it without a
+    /// runtime borrow check via `RefCell::get_mut`.
+    pub recording: Option<Box<std::cell::RefCell<crate::recording::Recording>>>,
 }
 
 /// Default friction mixing: `sqrt(frictionA * frictionB)`.

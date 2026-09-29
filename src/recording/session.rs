@@ -248,9 +248,13 @@ pub fn world_public_id(world: &World) -> WorldId {
     }
 }
 
-/// Start recording into a user-owned buffer. (b3StartRecordingIntoBuffer /
-/// b3World_StartRecording)
-pub fn start_recording(world: &mut World, recording: &mut Recording) {
+/// Start recording into `recording`, which the world takes ownership of for
+/// the session. (b3StartRecordingIntoBuffer / b3World_StartRecording)
+///
+/// C stores a borrowed `b3Recording*`; Rust moves the recording into the
+/// world instead (see [`World::recording`]) and hands it back from
+/// [`stop_recording`].
+pub fn start_recording(world: &mut World, mut recording: Recording) {
     recording.reset_for_session();
 
     let mut hdr = RecHeader {
@@ -269,9 +273,9 @@ pub fn start_recording(world: &mut World, recording: &mut Recording) {
         registry_byte_count: 0,
     };
 
-    // SAFETY: recording outlives the session; cleared in stop_recording.
-    world.recording = Some(recording as *mut Recording);
-
+    // The snapshot and state hash only read the world (never the recording
+    // slot), so writing into the local `recording` before installing it in
+    // the world produces the same bytes in the same order as C.
     let mut snap_buf = RecBuffer::new();
     serialize_world(world, &mut snap_buf, &mut recording.registry);
     hdr.snapshot_size = snap_buf.size() as u64;
@@ -282,16 +286,15 @@ pub fn start_recording(world: &mut World, recording: &mut Recording) {
     let wid = world_public_id(world);
     let hash = hash_world_state(world);
     recording.write_state_hash(wid, hash);
+
+    world.recording = Some(Box::new(std::cell::RefCell::new(recording)));
 }
 
-/// Stop recording and finalize the buffer. (b3StopRecordingInternal /
-/// b3World_StopRecording)
-pub fn stop_recording(world: &mut World) {
-    let Some(rec_ptr) = world.recording.take() else {
-        return;
-    };
-    // SAFETY: pointer set by start_recording; exclusive while session active.
-    let rec = unsafe { &mut *rec_ptr };
+/// Stop recording, finalize the buffer, and return the recording to the
+/// caller. Returns `None` if no session was active.
+/// (b3StopRecordingInternal / b3World_StopRecording)
+pub fn stop_recording(world: &mut World) -> Option<Recording> {
+    let mut rec = world.recording.take()?.into_inner();
 
     let bounds = if rec.have_bounds {
         rec.accumulated_bounds
@@ -312,13 +315,14 @@ pub fn stop_recording(world: &mut World) {
     debug_assert!(data.len() >= 48);
     data[32..40].copy_from_slice(&(registry_offset as u64).to_le_bytes());
     data[40..48].copy_from_slice(&(registry_byte_count as u64).to_le_bytes());
+
+    Some(rec)
 }
 
 /// Invoke `f` on the active recording, if any.
 #[inline]
 pub fn with_recording(world: &mut World, f: impl FnOnce(&mut Recording)) {
-    if let Some(p) = world.recording {
-        // SAFETY: valid for the session; no concurrent access in serial port.
-        unsafe { f(&mut *p) }
+    if let Some(rec) = world.recording.as_deref_mut() {
+        f(rec.get_mut())
     }
 }
