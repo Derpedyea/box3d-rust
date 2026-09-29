@@ -217,6 +217,14 @@ pub fn pos(x: f32, y: f32, z: f32) -> Pos {
     }
 }
 
+/// Promote an `f32` to the scalar type of `_like`, a world-position (`Pos`) coordinate: `f32`
+/// normally, `f64` when box3d-rust is built with `double-precision` (large world mode). Mirrors
+/// C's implicit float-to-double promotion in `b3Pos` arithmetic (e.g. `position.y + length`), so
+/// demo code compiles in both precision modes. `_like` only selects the type.
+pub fn pos_scalar<T: From<f32>>(value: f32, _like: T) -> T {
+    T::from(value)
+}
+
 pub fn vec3(x: f32, y: f32, z: f32) -> Vec3 {
     Vec3 { x, y, z }
 }

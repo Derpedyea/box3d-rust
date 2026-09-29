@@ -108,9 +108,9 @@ pub(crate) fn build_explosion() -> BenchScene {
     for i in -n..=n {
         for k in -n..=n {
             body_def.position = Pos {
-                x: 1.0 * i as f32,
+                x: (1.0 * i as f32) as _,
                 y: 0.0,
-                z: 1.0 * k as f32,
+                z: (1.0 * k as f32) as _,
             };
             let body = create_body(&mut scene.world, &body_def);
             create_hull_shape(&mut scene.world, body, &cyl_shape, &cylinder);
@@ -167,9 +167,9 @@ pub(crate) fn build_height_field() -> BenchScene {
 
     let mut body_def = default_body_def();
     body_def.position = Pos {
-        x: -0.5 * scene.hf_columns as f32,
+        x: (-0.5 * scene.hf_columns as f32) as _,
         y: 0.0,
-        z: -0.5 * scene.hf_rows as f32,
+        z: (-0.5 * scene.hf_rows as f32) as _,
     };
     let body = create_body(&mut scene.world, &body_def);
 
@@ -208,7 +208,11 @@ pub(crate) fn height_field_cast(scene: &mut BenchScene) -> Vec<f32> {
     while x <= span_x {
         let mut z = -span_z;
         while z <= span_z {
-            let ray_origin = Pos { x, y: 2.0, z };
+            let ray_origin = Pos {
+                x: x as _,
+                y: 2.0,
+                z: z as _,
+            };
             let hit = if radius == 0.0 {
                 world_cast_ray_closest(&scene.world, ray_origin, ray_translation, &filter).hit
             } else {
@@ -280,7 +284,11 @@ pub(crate) fn build_large_world() -> BenchScene {
         let x = -half_span + (i as f32 + 0.5) * cell;
         for j in 0..grid {
             let z = -half_span + (j as f32 + 0.5) * cell;
-            body_def.position = Pos { x, y: 0.0, z };
+            body_def.position = Pos {
+                x: x as _,
+                y: 0.0,
+                z: z as _,
+            };
             let body = create_body(&mut scene.world, &body_def);
             create_hull_shape(&mut scene.world, body, &shape_def, &boxh.base);
             scene.bodies.push(VisBody::box_body(
@@ -329,7 +337,11 @@ pub(crate) fn step_large_world(scene: &mut BenchScene) {
 
         let mut body_def = default_body_def();
         body_def.type_ = BodyType::Dynamic;
-        body_def.position = Pos { x, y: 1.5, z };
+        body_def.position = Pos {
+            x: x as _,
+            y: 1.5,
+            z: z as _,
+        };
         let body = create_body(&mut scene.world, &body_def);
         let sphere = Sphere {
             center: VEC3_ZERO,

@@ -109,9 +109,9 @@ pub(crate) fn build_junkyard() -> BenchScene {
         for x in 0..=20 {
             for z in 0..=20 {
                 body_def.position = Pos {
-                    x: -40.0 + 4.0 * x as f32,
-                    y: 4.0 * y as f32 + height + 1.0,
-                    z: -40.0 + 4.0 * z as f32,
+                    x: (-40.0 + 4.0 * x as f32) as _,
+                    y: (4.0 * y as f32 + height + 1.0) as _,
+                    z: (-40.0 + 4.0 * z as f32) as _,
                 };
                 let body = create_body(&mut scene.world, &body_def);
                 create_hull_shape(&mut scene.world, body, &shape_def, &rock_hull);
@@ -130,7 +130,7 @@ pub(crate) fn build_junkyard() -> BenchScene {
     let mut kin_def = default_body_def();
     kin_def.type_ = BodyType::Kinematic;
     kin_def.position = Pos {
-        x: pusher_radius,
+        x: pusher_radius as _,
         y: 0.0,
         z: 0.0,
     };
@@ -172,9 +172,9 @@ pub(crate) fn step_junkyard(scene: &mut BenchScene, _dt: f32) {
     let r = anim.radius;
     let target = WorldTransform {
         p: Pos {
-            x: r * cs.cosine,
+            x: (r * cs.cosine) as _,
             y: 0.0,
-            z: r * cs.sine,
+            z: (r * cs.sine) as _,
         },
         q: QUAT_IDENTITY,
     };
@@ -242,7 +242,11 @@ pub(crate) fn build_trees(grid_size: u32) -> BenchScene {
     let mut angular_velocity = -0.5f32;
     let mut z = -15.0f32;
     for body_index in 0..body_count {
-        body_def.position = Pos { x: 0.0, y: 1.0, z };
+        body_def.position = Pos {
+            x: 0.0,
+            y: 1.0,
+            z: z as _,
+        };
         let body = create_body(&mut scene.world, &body_def);
         for hull in &hulls {
             create_hull_shape(&mut scene.world, body, &shape_def, hull);

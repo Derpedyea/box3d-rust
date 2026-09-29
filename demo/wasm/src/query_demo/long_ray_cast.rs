@@ -126,8 +126,8 @@ pub fn lrc_reset() {
     let mut targets = [Pos::default(); SHAPE_COUNT];
     for (i, t) in targets.iter_mut().enumerate() {
         *t = Pos {
-            x: (i as f32 - 2.0) * spacing,
-            y: aim_height,
+            x: ((i as f32 - 2.0) * spacing) as _,
+            y: aim_height as _,
             z: 0.0,
         };
     }
@@ -208,9 +208,9 @@ pub fn lrc_reset() {
     let extent_x = hf_scale.x * (hf_count - 1) as f32;
     let extent_z = hf_scale.z * (hf_count - 1) as f32;
     body_def.position = Pos {
-        x: targets[4].x - 0.5 * extent_x,
+        x: targets[4].x - (0.5 * extent_x) as _,
         y: 0.0,
-        z: -0.5 * extent_z,
+        z: (-0.5 * extent_z) as _,
     };
     let hf_body = create_body(&mut world, &body_def);
     create_height_field_shape(&mut world, hf_body, &shape_def, &height_field);

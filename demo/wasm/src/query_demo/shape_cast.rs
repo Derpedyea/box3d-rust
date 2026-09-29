@@ -69,7 +69,11 @@ pub fn sc_reset() {
         let y = 3.0 + 2.0 * index as f32;
 
         // Sphere r=0.9, rot axisX 0.5PI.
-        body_def.position = Pos { x: -6.0, y, z: 0.0 };
+        body_def.position = Pos {
+            x: -6.0,
+            y: y as _,
+            z: 0.0,
+        };
         body_def.rotation = make_quat_from_axis_angle(VEC3_AXIS_X, 0.5 * PI);
         let b = create_body(&mut world, &body_def);
         create_sphere_shape(
@@ -84,7 +88,11 @@ pub fn sc_reset() {
         vis.push(VisBody::sphere_body(b.index1 - 1, 0.9));
 
         // Capsule r=0.7, rot axisZ 0.25PI.
-        body_def.position = Pos { x: -2.0, y, z: 0.0 };
+        body_def.position = Pos {
+            x: -2.0,
+            y: y as _,
+            z: 0.0,
+        };
         body_def.rotation = make_quat_from_axis_angle(VEC3_AXIS_Z, 0.25 * PI);
         let b = create_body(&mut world, &body_def);
         let capsule = Capsule {
@@ -104,14 +112,22 @@ pub fn sc_reset() {
         vis.push(VisBody::capsule_body(b.index1 - 1, &capsule));
 
         // Hull (box), rot axisZ 0.25PI.
-        body_def.position = Pos { x: 2.0, y, z: 0.0 };
+        body_def.position = Pos {
+            x: 2.0,
+            y: y as _,
+            z: 0.0,
+        };
         body_def.rotation = make_quat_from_axis_angle(VEC3_AXIS_Z, 0.25 * PI);
         let b = create_body(&mut world, &body_def);
         create_hull_shape(&mut world, b, &shape_def, &box_hull.base);
         vis.push(VisBody::box_body(b.index1 - 1, 0.6, 0.6, 0.6));
 
         // Torus mesh, rot axisX 0.5PI, scale ones.
-        body_def.position = Pos { x: 6.0, y, z: 0.0 };
+        body_def.position = Pos {
+            x: 6.0,
+            y: y as _,
+            z: 0.0,
+        };
         body_def.rotation = make_quat_from_axis_angle(VEC3_AXIS_X, 0.5 * PI);
         let b = create_body(&mut world, &body_def);
         create_mesh_shape(&mut world, b, &shape_def, &mesh, VEC3_ONE);

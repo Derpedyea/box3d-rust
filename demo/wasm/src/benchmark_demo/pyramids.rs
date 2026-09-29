@@ -34,7 +34,11 @@ pub(crate) fn build_large_pyramid() -> BenchScene {
         let y = (2.0 * i as f32 + 1.0) * shift;
         for j in i..base {
             let x = (i as f32 + 1.0) * shift + 2.0 * (j - i) as f32 * shift - h * base as f32;
-            body_def.position = Pos { x, y, z: 0.0 };
+            body_def.position = Pos {
+                x: x as _,
+                y: y as _,
+                z: 0.0,
+            };
             let body = create_body(&mut scene.world, &body_def);
             create_hull_shape(&mut scene.world, body, &shape_def, &box_hull.base);
             scene
@@ -74,7 +78,11 @@ pub(crate) fn build_wide_pyramid() -> BenchScene {
                 let x = -(pyramid_height as f32) + box_size * j as f32 + odd;
                 let y = 1.0 + (box_size + box_separation) * i as f32;
                 let z = -(pyramid_height as f32) + box_size * k as f32 + odd;
-                body_def.position = Pos { x, y, z };
+                body_def.position = Pos {
+                    x: x as _,
+                    y: y as _,
+                    z: z as _,
+                };
                 let body = create_body(&mut scene.world, &body_def);
                 create_hull_shape(&mut scene.world, body, &shape_def, &box_hull.base);
                 scene
@@ -106,7 +114,11 @@ fn create_small_pyramid(
         let y = (2.0 * i as f32 + 1.0) * extent;
         for j in i..base_count {
             let x = (i as f32 + 1.0) * extent + 2.0 * (j - i) as f32 * extent + center_x - 0.5;
-            body_def.position = Pos { x, y, z: base_z };
+            body_def.position = Pos {
+                x: x as _,
+                y: y as _,
+                z: base_z as _,
+            };
             let body = create_body(&mut scene.world, &body_def);
             create_hull_shape(&mut scene.world, body, &shape_def, &box_hull.base);
             scene

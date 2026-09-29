@@ -36,9 +36,9 @@ pub(crate) fn build_falling_boxes() -> BenchScene {
         for j in 0..8 {
             for k in 0..8 {
                 body_def.position = Pos {
-                    x: -16.0 * a + 4.0 * a * j as f32,
-                    y: 4.0 * a * i as f32 + 5.0 * a,
-                    z: -16.0 * a + 4.0 * a * k as f32,
+                    x: (-16.0 * a + 4.0 * a * j as f32) as _,
+                    y: (4.0 * a * i as f32 + 5.0 * a) as _,
+                    z: (-16.0 * a + 4.0 * a * k as f32) as _,
                 };
                 let body = create_body(&mut scene.world, &body_def);
                 create_hull_shape(&mut scene.world, body, &shape_def, &box_hull.base);
@@ -105,9 +105,9 @@ pub(crate) fn build_candy_cups() -> BenchScene {
         for j in 0..m {
             for k in 0..m {
                 body_def.position = Pos {
-                    x: -10.0 + 2.5 * j as f32,
-                    y: 1.0 * i as f32,
-                    z: -10.0 + 2.5 * k as f32,
+                    x: (-10.0 + 2.5 * j as f32) as _,
+                    y: (1.0 * i as f32) as _,
+                    z: (-10.0 + 2.5 * k as f32) as _,
                 };
                 let body = create_body(&mut scene.world, &body_def);
                 create_hull_shape(&mut scene.world, body, &shape_def, &convex);
@@ -180,7 +180,11 @@ pub(crate) fn build_washer() -> BenchScene {
         for _j in 0..grid_count {
             let mut z = -2.0 * a * grid_count as f32;
             for _k in 0..grid_count {
-                body_def.position = Pos { x, y, z };
+                body_def.position = Pos {
+                    x: x as _,
+                    y: y as _,
+                    z: z as _,
+                };
                 let body = create_body(&mut scene.world, &body_def);
                 create_hull_shape(&mut scene.world, body, &shape_def, &cube.base);
                 scene
@@ -356,7 +360,7 @@ pub(crate) fn build_destruction() -> BenchScene {
     ex.falloff = 0.5 * extent;
     ex.position = Pos {
         x: 0.0,
-        y: 2.0 * extent,
+        y: (2.0 * extent) as _,
         z: 0.0,
     };
     ex.impulse_per_area = if small { 200.0 } else { 1000.0 };
@@ -399,9 +403,9 @@ fn spawn_destruction(scene: &mut BenchScene, d: &mut DestructionState) {
                     continue;
                 }
                 body_def.position = Pos {
-                    x: (2.0 * i as f32 - d.grid_count as f32 + 1.0) * a,
-                    y: (2.0 * j as f32 + 1.0) * a,
-                    z: (2.0 * k as f32 - d.grid_count as f32 + 1.0) * a,
+                    x: ((2.0 * i as f32 - d.grid_count as f32 + 1.0) * a) as _,
+                    y: ((2.0 * j as f32 + 1.0) * a) as _,
+                    z: ((2.0 * k as f32 - d.grid_count as f32 + 1.0) * a) as _,
                 };
                 let body = create_body(&mut scene.world, &body_def);
                 create_hull_shape(&mut scene.world, body, &shape_def, &box_hull.base);
@@ -546,9 +550,9 @@ pub(crate) fn build_convex_pile() -> BenchScene {
                 let pos_z = (z as f32 - 0.5 * count_z as f32) * scatter;
                 let pos_y = amplitude + 2.0 * amplitude * layer as f32;
                 body_def.position = Pos {
-                    x: pos_x,
-                    y: pos_y,
-                    z: pos_z,
+                    x: pos_x as _,
+                    y: pos_y as _,
+                    z: pos_z as _,
                 };
                 let body = create_body(&mut scene.world, &body_def);
                 create_hull_shape(&mut scene.world, body, &shape_def, &convex);

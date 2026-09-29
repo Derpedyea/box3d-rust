@@ -62,7 +62,11 @@ pub(crate) fn build_rain() -> BenchScene {
         let mut z = -0.5 * span + 0.5 * RAIN_GRID_SIZE;
         for _j in 0..grid_count {
             let mut body_def = default_body_def();
-            body_def.position = Pos { x, y: 0.0, z };
+            body_def.position = Pos {
+                x: x as _,
+                y: 0.0,
+                z: z as _,
+            };
             let body = create_body(&mut scene.world, &body_def);
             create_mesh_shape(&mut scene.world, body, &shape_def, &grid_mesh, VEC3_ONE);
             create_mesh_shape(&mut scene.world, body, &shape_def, &torus_mesh, VEC3_ONE);
@@ -101,9 +105,9 @@ fn create_group(scene: &mut BenchScene, rain: &mut RainState, row_index: i32, co
     let group_distance = span / rain.grid_count as f32;
 
     let mut position = Pos {
-        x: -0.5 * span + group_distance * (column_index as f32 + 0.5),
+        x: (-0.5 * span + group_distance * (column_index as f32 + 0.5)) as _,
         y: 20.0,
-        z: -0.5 * span + group_distance * (row_index as f32 + 0.5),
+        z: (-0.5 * span + group_distance * (row_index as f32 + 0.5)) as _,
     };
 
     for i in 0..rain.group_size {

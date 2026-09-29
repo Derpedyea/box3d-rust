@@ -90,7 +90,11 @@ pub fn ow_reset() {
 
         // Sphere r=0.8.
         body_def.type_ = ty;
-        body_def.position = Pos { x: -6.0, y, z: 0.0 };
+        body_def.position = Pos {
+            x: -6.0,
+            y: y as _,
+            z: 0.0,
+        };
         body_def.rotation = make_quat_from_axis_angle(VEC3_AXIS_X, 0.5 * PI);
         let b = create_body(&mut world, &body_def);
         create_sphere_shape(
@@ -106,7 +110,11 @@ pub fn ow_reset() {
 
         // Capsule.
         body_def.type_ = ty;
-        body_def.position = Pos { x: -3.0, y, z: 0.0 };
+        body_def.position = Pos {
+            x: -3.0,
+            y: y as _,
+            z: 0.0,
+        };
         body_def.rotation = make_quat_from_axis_angle(VEC3_AXIS_Z, 0.25 * PI);
         let b = create_body(&mut world, &body_def);
         let capsule = Capsule {
@@ -127,7 +135,11 @@ pub fn ow_reset() {
 
         // Hull (box).
         body_def.type_ = ty;
-        body_def.position = Pos { x: 0.0, y, z: 0.0 };
+        body_def.position = Pos {
+            x: 0.0,
+            y: y as _,
+            z: 0.0,
+        };
         body_def.rotation = make_quat_from_axis_angle(VEC3_AXIS_Z, 0.25 * PI);
         let b = create_body(&mut world, &body_def);
         create_hull_shape(&mut world, b, &shape_def, &box_hull.base);
@@ -135,7 +147,11 @@ pub fn ow_reset() {
 
         // Mesh (torus), scale {-0.5,1.5,-1.0}.
         body_def.type_ = ty;
-        body_def.position = Pos { x: 3.0, y, z: 0.0 };
+        body_def.position = Pos {
+            x: 3.0,
+            y: y as _,
+            z: 0.0,
+        };
         body_def.rotation = make_quat_from_axis_angle(VEC3_AXIS_X, 0.5 * PI);
         let b = create_body(&mut world, &body_def);
         let scale = Vec3 {
@@ -153,7 +169,7 @@ pub fn ow_reset() {
         body_def.type_ = BodyType::Static;
         body_def.position = Pos {
             x: 5.0,
-            y: 2.0 + 2.0 * index as f32,
+            y: (2.0 + 2.0 * index as f32) as _,
             z: 0.0,
         };
         body_def.rotation = make_quat_from_axis_angle(VEC3_AXIS_X, -0.5 * PI);

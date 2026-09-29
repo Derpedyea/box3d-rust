@@ -55,8 +55,8 @@ pub(crate) fn build_joint_grid() -> BenchScene {
                 BodyType::Dynamic
             };
             body_def.position = Pos {
-                x: fk,
-                y: -fi,
+                x: fk as _,
+                y: -fi as _,
                 z: 0.0,
             };
             let body = create_body(&mut scene.world, &body_def);
@@ -188,9 +188,9 @@ pub(crate) fn build_chains() -> BenchScene {
         for _col in 0..grid_count {
             for i in 0..link_count {
                 body_def.position = Pos {
-                    x,
-                    y: (1.0 - 2.0 * i as f32) * link_extent + 3.0,
-                    z,
+                    x: x as _,
+                    y: ((1.0 - 2.0 * i as f32) * link_extent + 3.0) as _,
+                    z: z as _,
                 };
                 body_def.type_ = if i == 0 {
                     BodyType::Static

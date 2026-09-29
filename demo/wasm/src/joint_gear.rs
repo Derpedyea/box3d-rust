@@ -2,7 +2,7 @@
 
 use crate::joint_demo::{empty_state, new_world, JointScene, JointState};
 use crate::rng::XorShift32;
-use crate::vis::{pos, vec3, VisBody};
+use crate::vis::{pos, pos_scalar, vec3, VisBody};
 use box3d_rust::body::{body_get_local_point, create_body};
 use box3d_rust::debug_draw::HexColor;
 use box3d_rust::geometry::Capsule;
@@ -430,7 +430,7 @@ fn create_chain(
     body_def.type_ = BodyType::Dynamic;
     let mut position = Pos {
         x: attach.x,
-        y: attach.y - LINK_HALF_LENGTH,
+        y: attach.y - pos_scalar(LINK_HALF_LENGTH, attach.y),
         z: attach.z,
     };
     let mut prev = top_body;
@@ -445,7 +445,7 @@ fn create_chain(
         ));
         let pivot = Pos {
             x: position.x,
-            y: position.y + LINK_HALF_LENGTH,
+            y: position.y + pos_scalar(LINK_HALF_LENGTH, position.y),
             z: attach.z,
         };
         joint_def.base.body_id_a = prev;
@@ -453,7 +453,7 @@ fn create_chain(
         joint_def.base.local_frame_a.p = body_get_local_point(world, prev, pivot);
         joint_def.base.local_frame_b.p = body_get_local_point(world, body_id, pivot);
         create_revolute_joint(world, &joint_def);
-        position.y -= 2.0 * LINK_HALF_LENGTH;
+        position.y -= pos_scalar(2.0 * LINK_HALF_LENGTH, position.y);
         prev = body_id;
     }
     prev
@@ -489,8 +489,8 @@ fn create_door(
     for i in 0..2 {
         let pivot = Pos {
             x: door_position.x,
-            y: door_position.y + DOOR_HALF_HEIGHT,
-            z: depths[i],
+            y: door_position.y + pos_scalar(DOOR_HALF_HEIGHT, door_position.y),
+            z: depths[i] as _,
         };
         let mut joint_def = default_revolute_joint_def();
         joint_def.base.body_id_a = links[i];
@@ -622,13 +622,20 @@ pub(crate) fn build_gear_lift() -> JointState {
     create_revolute_joint(&mut world, &revolute);
 
     let link_attach = Pos {
-        x: gear_position2.x + GEAR_RADIUS + 2.0 * TOOTH_HALF_WIDTH + TOOTH_RADIUS,
+        x: gear_position2.x
+            + pos_scalar(GEAR_RADIUS, gear_position2.x)
+            + pos_scalar(2.0 * TOOTH_HALF_WIDTH, gear_position2.x)
+            + pos_scalar(TOOTH_RADIUS, gear_position2.x),
         y: gear_position2.y,
         z: 0.0,
     };
     let door_position = Pos {
         x: link_attach.x,
-        y: link_attach.y - (2.0 * LINK_COUNT as f32 * LINK_HALF_LENGTH + DOOR_HALF_HEIGHT),
+        y: link_attach.y
+            - pos_scalar(
+                2.0 * LINK_COUNT as f32 * LINK_HALF_LENGTH + DOOR_HALF_HEIGHT,
+                link_attach.y,
+            ),
         z: 0.0,
     };
     let near_link = create_chain(
@@ -638,7 +645,7 @@ pub(crate) fn build_gear_lift() -> JointState {
         Pos {
             x: link_attach.x,
             y: link_attach.y,
-            z: -GEAR_Z,
+            z: -GEAR_Z as _,
         },
     );
     let far_link = create_chain(
@@ -648,7 +655,7 @@ pub(crate) fn build_gear_lift() -> JointState {
         Pos {
             x: link_attach.x,
             y: link_attach.y,
-            z: GEAR_Z,
+            z: GEAR_Z as _,
         },
     );
     create_door(

@@ -1,7 +1,7 @@
 //! Door, Bridge, Motion Locks (sample_joint.cpp).
 
 use super::{add_ground_box, empty_state, install, new_world, JointScene, JointState};
-use crate::vis::{pos, vec3, VisBody};
+use crate::vis::{pos, pos_scalar, vec3, VisBody};
 use box3d_rust::body::{
     body_apply_linear_impulse, body_apply_linear_impulse_to_center, body_get_local_point,
     body_get_world_point, body_set_gravity_scale, create_body,
@@ -316,8 +316,16 @@ pub fn joint_reset_motion_locks() -> u32 {
         aux.push(body);
 
         let length = 2.0f32;
-        let pivot1 = pos(position.x, position.y + 1.0 + length, 0.0);
-        let pivot2 = pos(position.x, position.y + 1.0, 0.0);
+        let pivot1 = Pos {
+            x: position.x,
+            y: position.y + 1.0 + pos_scalar(length, position.y),
+            z: 0.0,
+        };
+        let pivot2 = Pos {
+            x: position.x,
+            y: position.y + 1.0,
+            z: 0.0,
+        };
         let mut jd = default_distance_joint_def();
         jd.base.body_id_a = ground;
         jd.base.body_id_b = body;
@@ -339,7 +347,11 @@ pub fn joint_reset_motion_locks() -> u32 {
         bodies.push(VisBody::box_body(body.index1 - 1, 1.0, 1.0, 0.5));
         aux.push(body);
 
-        let pivot = pos(position.x - 1.0, position.y, 0.0);
+        let pivot = Pos {
+            x: position.x - 1.0,
+            y: position.y,
+            z: 0.0,
+        };
         let mut jd = default_prismatic_joint_def();
         jd.base.body_id_a = ground;
         jd.base.body_id_b = body;
@@ -360,7 +372,11 @@ pub fn joint_reset_motion_locks() -> u32 {
         bodies.push(VisBody::box_body(body.index1 - 1, 1.0, 1.0, 0.5));
         aux.push(body);
 
-        let pivot = pos(position.x - 1.0, position.y, 0.0);
+        let pivot = Pos {
+            x: position.x - 1.0,
+            y: position.y,
+            z: 0.0,
+        };
         let mut jd = default_revolute_joint_def();
         jd.base.body_id_a = ground;
         jd.base.body_id_b = body;
@@ -381,7 +397,11 @@ pub fn joint_reset_motion_locks() -> u32 {
         bodies.push(VisBody::box_body(body.index1 - 1, 1.0, 1.0, 0.5));
         aux.push(body);
 
-        let pivot = pos(position.x - 1.0, position.y, 0.0);
+        let pivot = Pos {
+            x: position.x - 1.0,
+            y: position.y,
+            z: 0.0,
+        };
         let mut jd = default_weld_joint_def();
         jd.base.body_id_a = ground;
         jd.base.body_id_b = body;

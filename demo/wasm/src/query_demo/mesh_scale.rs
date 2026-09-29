@@ -119,8 +119,8 @@ pub fn msc_set_params(sx: f32, sy: f32, sz: f32, start_y: f32, start_z: f32, sph
         // C: start.x stays -2 (delta.x from init); Y/Z from sliders (line 826).
         state.start = Pos {
             x: -2.0,
-            y: start_y.clamp(-2.0, 2.0),
-            z: start_z.clamp(-2.0, 2.0),
+            y: start_y.clamp(-2.0, 2.0) as _,
+            z: start_z.clamp(-2.0, 2.0) as _,
         };
         state.sphere_cast = sphere_cast != 0;
 
@@ -153,9 +153,9 @@ fn compute_cast(world: &World, start: Pos, sphere_cast: bool) -> Vec<f32> {
     };
     let filter = default_query_filter();
     let end = Pos {
-        x: start.x + translation.x,
-        y: start.y + translation.y,
-        z: start.z + translation.z,
+        x: start.x + translation.x as _,
+        y: start.y + translation.y as _,
+        z: start.z + translation.z as _,
     };
     let mut out = vec![
         start.x as f32,
