@@ -22,38 +22,38 @@ use crate::world::World;
 // step and the state hash differ from the float build. Both modes are
 // internally deterministic. Values from test_determinism.c.
 #[cfg(feature = "double-precision")]
-const RAGDOLL_SLEEP_STEP: i32 = 273;
+const RAGDOLL_SLEEP_STEP: i32 = 266;
 #[cfg(feature = "double-precision")]
-const RAGDOLL_HASH: u32 = 0x0F4D_D1EB;
+const RAGDOLL_HASH: u32 = 0x2546_3D33;
 #[cfg(feature = "double-precision")]
-const WAVE_PILE_SLEEP_STEP: i32 = 314;
+const WAVE_PILE_SLEEP_STEP: i32 = 267;
 #[cfg(feature = "double-precision")]
-const WAVE_PILE_HASH: u32 = 0x03B5_09B6;
+const WAVE_PILE_HASH: u32 = 0xFFC7_AB0C;
 #[cfg(feature = "double-precision")]
 const QUERY_SPAWN_SLEEP_STEP: i32 = 242;
 #[cfg(feature = "double-precision")]
-const QUERY_SPAWN_HASH: u32 = 0x9B96_A098;
+const QUERY_SPAWN_HASH: u32 = 0x4895_85E6;
 #[cfg(feature = "double-precision")]
 const QUERY_SPAWN_HIT_COUNT: i32 = 59;
 #[cfg(feature = "double-precision")]
 const QUERY_SPAWN_QUERY_HASH: u32 = 0x5B44_29DC;
 #[cfg(feature = "double-precision")]
-const MESH_DROP_SLEEP_STEP: i32 = 217;
+const MESH_DROP_SLEEP_STEP: i32 = 216;
 #[cfg(feature = "double-precision")]
-const MESH_DROP_HASH: u32 = 0xCF94_6437;
+const MESH_DROP_HASH: u32 = 0x3EAB_B439;
 
 #[cfg(not(feature = "double-precision"))]
-const RAGDOLL_SLEEP_STEP: i32 = 274;
+const RAGDOLL_SLEEP_STEP: i32 = 271;
 #[cfg(not(feature = "double-precision"))]
-const RAGDOLL_HASH: u32 = 0x773A_B8ED;
+const RAGDOLL_HASH: u32 = 0xFFE4_2571;
 #[cfg(not(feature = "double-precision"))]
-const WAVE_PILE_SLEEP_STEP: i32 = 314;
+const WAVE_PILE_SLEEP_STEP: i32 = 322;
 #[cfg(not(feature = "double-precision"))]
-const WAVE_PILE_HASH: u32 = 0x8CB8_F656;
+const WAVE_PILE_HASH: u32 = 0xA4E7_E65A;
 #[cfg(not(feature = "double-precision"))]
 const QUERY_SPAWN_SLEEP_STEP: i32 = 242;
 #[cfg(not(feature = "double-precision"))]
-const QUERY_SPAWN_HASH: u32 = 0xF1ED_EF47;
+const QUERY_SPAWN_HASH: u32 = 0xF3AD_9BA6;
 #[cfg(not(feature = "double-precision"))]
 const QUERY_SPAWN_HIT_COUNT: i32 = 59;
 #[cfg(not(feature = "double-precision"))]
@@ -61,7 +61,7 @@ const QUERY_SPAWN_QUERY_HASH: u32 = 0xE327_1F3D;
 #[cfg(not(feature = "double-precision"))]
 const MESH_DROP_SLEEP_STEP: i32 = 217;
 #[cfg(not(feature = "double-precision"))]
-const MESH_DROP_HASH: u32 = 0x256B_C40B;
+const MESH_DROP_HASH: u32 = 0x0EBF_F3E2;
 
 // C loops each scenario over several worker counts to prove every schedule reproduces the
 // first run (EnsureRepeatable); so does the port, with the `parallel` feature on.

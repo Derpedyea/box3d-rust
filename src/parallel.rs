@@ -16,6 +16,15 @@ pub type ThreadPool = rayon::ThreadPool;
 #[derive(Debug)]
 pub struct ThreadPool;
 
+#[cfg(not(feature = "parallel"))]
+impl ThreadPool {
+    /// Mirrors `rayon::ThreadPool::current_num_threads`; the stand-in pool is never built, so
+    /// any caller runs serially.
+    pub fn current_num_threads(&self) -> usize {
+        1
+    }
+}
+
 /// A pool of `worker_count` threads, or `None` (serial) for one worker, without the
 /// `parallel` feature, or if the threads can't be spawned.
 pub(crate) fn make_pool(worker_count: i32) -> Option<std::sync::Arc<ThreadPool>> {

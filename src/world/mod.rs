@@ -61,7 +61,7 @@ use crate::id::ShapeId;
 use crate::id_pool::IdPool;
 use crate::island::Island;
 use crate::joint::Joint;
-use crate::math_functions::{clamp_int, Aabb, Vec3};
+use crate::math_functions::{clamp_float, clamp_int, Aabb, Vec3};
 use crate::name_cache::NameCache;
 use crate::sensor::{Sensor, SensorHit, SensorTaskContext};
 use crate::shape::Shape;
@@ -295,6 +295,7 @@ pub struct World {
     pub restitution_iterations: i32,
     pub enable_restitution_propagation: bool,
     pub max_linear_speed: f32,
+    pub isotropic_inertia_tolerance: f32,
     pub contact_speed: f32,
     pub contact_hertz: f32,
     pub contact_damping_ratio: f32,
@@ -505,6 +506,7 @@ impl World {
             ),
             enable_restitution_propagation: def.enable_restitution_propagation,
             max_linear_speed: def.maximum_linear_speed,
+            isotropic_inertia_tolerance: clamp_float(def.isotropic_inertia_tolerance, 0.0, 1.0),
             contact_speed: def.contact_speed,
             contact_hertz: def.contact_hertz,
             contact_damping_ratio: def.contact_damping_ratio,

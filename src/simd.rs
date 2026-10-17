@@ -116,14 +116,6 @@ pub fn max_w(a: FloatW, b: FloatW) -> FloatW {
     a.cmp_ge(b).blend(a, b)
 }
 
-/// Clamp `a` to `[-b, b]`. (b3SymClampW)
-#[inline]
-pub fn sym_clamp_w(a: FloatW, b: FloatW) -> FloatW {
-    let r = min_w(a, b);
-    let nb = neg_w(b);
-    r.cmp_le(nb).blend(nb, r)
-}
-
 /// (b3AndW)
 #[inline]
 pub fn and_w(a: FloatW, b: FloatW) -> FloatW {
