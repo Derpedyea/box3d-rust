@@ -129,7 +129,12 @@ impl CollideStats {
 }
 
 /// Update one contact. (the body of b3CollideTask's loop)
-fn collide_contact(contact: &mut Contact, shared: &CollideShared<'_>, stats: &mut CollideStats) {
+fn collide_contact(
+    contact: &mut Contact,
+    shared: &CollideShared<'_>,
+    stats: &mut CollideStats,
+    local: &mut crate::manifold::LocalManifold,
+) {
     let recycle_distance = shared.recycle_distance;
     let recycle_distance_non_touching = shared.recycle_distance_non_touching;
     let contact_index = contact.contact_id;
@@ -257,6 +262,7 @@ fn collide_contact(contact: &mut Contact, shared: &CollideShared<'_>, stats: &mu
                 contact: &mut *contact,
                 stats: &mut *stats,
                 params: &shared.params,
+                local,
             },
             shared.shapes,
             shape_id_a,
@@ -405,9 +411,11 @@ pub fn collide(world: &mut World, dt: f32) {
             || {
                 crate::parallel::collide_contacts(pool.as_deref(), &mut work, |block| {
                     let mut stats = CollideStats::default();
-                    for contact in block.iter_mut() {
-                        collide_contact(contact, &shared, &mut stats);
-                    }
+                    super::update::with_local_manifold(|local| {
+                        for contact in block.iter_mut() {
+                            collide_contact(contact, &shared, &mut stats, local);
+                        }
+                    });
                     stats
                 })
             },

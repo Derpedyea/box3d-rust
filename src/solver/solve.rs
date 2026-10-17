@@ -37,16 +37,27 @@ struct ColorContacts<'a> {
 }
 
 impl<'a> ColorContacts<'a> {
-    fn convex(&mut self, color: usize) -> &mut [&'a mut Contact] {
-        &mut self.lanes[self.starts[2 * color]..self.starts[2 * color + 1]]
-    }
-
-    fn scalar(&mut self, color: usize) -> &mut [&'a mut Contact] {
-        &mut self.lanes[self.starts[2 * color + 1]..self.starts[2 * color + 2]]
+    /// Every color's (convex, scalar) contacts, as disjoint slices.
+    fn split(&mut self) -> Vec<(&mut [&'a mut Contact], &mut [&'a mut Contact])> {
+        let mut rest = &mut self.lanes[..];
+        let mut taken = 0;
+        let mut out = Vec::with_capacity(self.starts.len() / 2);
+        for color in self.starts[1..].chunks(2) {
+            let (convex, tail) = rest.split_at_mut(color[0] - taken);
+            let (scalar, tail) = tail.split_at_mut(color[1] - color[0]);
+            taken = color[1];
+            rest = tail;
+            out.push((convex, scalar));
+        }
+        out
     }
 }
 
-fn color_contacts<'a>(contacts: &'a mut [Contact], graph: &ConstraintGraph) -> ColorContacts<'a> {
+fn color_contacts<'a>(
+    pool: Option<&crate::parallel::ThreadPool>,
+    contacts: &'a mut [Contact],
+    graph: &ConstraintGraph,
+) -> ColorContacts<'a> {
     let mut starts = Vec::with_capacity(2 * graph.colors.len() + 1);
     let mut total = 0;
     for color in &graph.colors {
@@ -57,27 +68,19 @@ fn color_contacts<'a>(contacts: &'a mut [Contact], graph: &ConstraintGraph) -> C
     }
     starts.push(total);
 
-    let mut slots: Vec<Option<&'a mut Contact>> = Vec::with_capacity(total);
-    slots.resize_with(total, || None);
-    for contact in contacts.iter_mut() {
+    let lanes = crate::parallel::borrow_by_slot(pool, contacts, total, |contact| {
         let color_index = contact.color_index;
         if color_index == NULL_INDEX || contact.contact_id == NULL_INDEX {
-            continue;
+            return None;
         }
         let color_index = color_index as usize;
         let is_scalar = (contact.flags & contact_flags::SIM_MESH_CONTACT) != 0
             || color_index == OVERFLOW_INDEX as usize;
         let slot = starts[2 * color_index + is_scalar as usize] + contact.local_index as usize;
         debug_assert!(slot < starts[2 * color_index + is_scalar as usize + 1]);
-        slots[slot] = Some(contact);
-    }
-    ColorContacts {
-        lanes: slots
-            .into_iter()
-            .map(|c| c.expect("graph contact"))
-            .collect(),
-        starts,
-    }
+        Some(slot)
+    });
+    ColorContacts { lanes, starts }
 }
 
 /// Solve with graph coloring. (b3Solve — serial)
@@ -159,7 +162,10 @@ pub fn solve(world: &mut World, context: &StepContext) {
     // The solver works on a copy of the awake body states that worker threads can share.
     // See [`SolverStates`].
     let mut states = std::mem::take(&mut world.solver_states);
-    states.load_from(&world.solver_sets[AWAKE_SET as usize].body_states);
+    states.load_from(
+        world.thread_pool.as_deref(),
+        &world.solver_sets[AWAKE_SET as usize].body_states,
+    );
 
     // Prepare contact constraints for every color: wide constraints for the convex contacts
     // and scalar constraints for the mesh contacts. The overflow color only has mesh contacts.
@@ -168,37 +174,54 @@ pub fn solve(world: &mut World, context: &StepContext) {
     let mut wide_constraints = std::mem::take(&mut world.wide_constraints);
     mesh_constraints.resize_with(GRAPH_COLOR_COUNT as usize, Vec::new);
     wide_constraints.resize_with(GRAPH_COLOR_COUNT as usize, Vec::new);
-    let mut any_restitution = false;
     let pool = world.thread_pool.clone();
     let neg_hit_threshold = -world.hit_event_threshold;
 
     // The graph's contacts stay borrowed from prepare to store.
-    let mut lanes = color_contacts(&mut world.contacts, &world.constraint_graph);
-    {
+    let mut lanes = color_contacts(
+        pool.as_deref(),
+        &mut world.contacts,
+        &world.constraint_graph,
+    );
+    let any_restitution = {
+        // All colors prepare at once; each color's constraints prepare in parallel too.
         let sims = &world.solver_sets[AWAKE_SET as usize].body_sims;
-        for color_index in 0..GRAPH_COLOR_COUNT as usize {
-            debug_assert!(
-                color_index != OVERFLOW_INDEX as usize || lanes.convex(color_index).is_empty()
-            );
-            let wide_restitution = prepare_contacts_convex(
-                &mut wide_constraints[color_index],
-                lanes.convex(color_index),
-                sims,
-                &states,
-                context.enable_warm_starting,
-                pool.as_deref(),
-            );
-            let mesh_restitution = prepare_mesh_contacts(
-                &mut mesh_constraints[color_index],
-                lanes.scalar(color_index),
-                sims,
-                &states,
-                context,
-                pool.as_deref(),
-            );
-            any_restitution = any_restitution || wide_restitution || mesh_restitution;
-        }
-    }
+        let mut jobs: Vec<_> = wide_constraints
+            .iter_mut()
+            .zip(mesh_constraints.iter_mut())
+            .zip(lanes.split())
+            .collect();
+        let any_restitution = crate::parallel::map_reduce_blocks(
+            pool.as_deref(),
+            &mut jobs,
+            1,
+            |block| {
+                let mut any = false;
+                for ((wide, mesh), (convex_lanes, scalar_lanes)) in block.iter_mut() {
+                    any |= prepare_contacts_convex(
+                        wide,
+                        convex_lanes,
+                        sims,
+                        &states,
+                        context.enable_warm_starting,
+                        pool.as_deref(),
+                    );
+                    any |= prepare_mesh_contacts(
+                        mesh,
+                        scalar_lanes,
+                        sims,
+                        &states,
+                        context,
+                        pool.as_deref(),
+                    );
+                }
+                any
+            },
+            |a, b| a || b,
+        );
+        debug_assert!(wide_constraints[OVERFLOW_INDEX as usize].is_empty());
+        any_restitution
+    };
 
     world.profile.prepare_constraints += crate::timer::get_milliseconds_and_reset(&mut ticks);
 
@@ -256,7 +279,10 @@ pub fn solve(world: &mut World, context: &StepContext) {
             .set_bit(joint_id as u32);
     }
 
-    states.store_to(&mut world.solver_sets[AWAKE_SET as usize].body_states);
+    states.store_to(
+        world.thread_pool.as_deref(),
+        &mut world.solver_sets[AWAKE_SET as usize].body_states,
+    );
     world.solver_states = states;
 
     world.profile.restitution += crate::timer::get_milliseconds_and_reset(&mut ticks);
@@ -264,23 +290,40 @@ pub fn solve(world: &mut World, context: &StepContext) {
     // Store impulses. C stores the overflow contacts with b3StoreImpulses_Overflow (the Mesh
     // kernel, which also flags hit events) and the colors in the store stages.
     {
-        let mut hits = Vec::new();
-        for color_index in 0..GRAPH_COLOR_COUNT as usize {
-            if color_index != OVERFLOW_INDEX as usize {
-                hits.append(&mut store_impulses_convex(
-                    &wide_constraints[color_index],
-                    lanes.convex(color_index),
-                    neg_hit_threshold,
-                    pool.as_deref(),
-                ));
-            }
-            hits.append(&mut store_impulses(
-                &mesh_constraints[color_index],
-                lanes.scalar(color_index),
-                neg_hit_threshold,
-                pool.as_deref(),
-            ));
-        }
+        // All colors store at once; each color's constraints store in parallel too.
+        let mut jobs: Vec<_> = wide_constraints
+            .iter()
+            .zip(mesh_constraints.iter())
+            .zip(lanes.split())
+            .collect();
+        let hits = crate::parallel::map_reduce_blocks(
+            pool.as_deref(),
+            &mut jobs,
+            1,
+            |block| {
+                let mut hits = Vec::new();
+                for ((wide, mesh), (convex_lanes, scalar_lanes)) in block.iter_mut() {
+                    hits.append(&mut store_impulses_convex(
+                        wide,
+                        convex_lanes,
+                        neg_hit_threshold,
+                        pool.as_deref(),
+                    ));
+                    hits.append(&mut store_impulses(
+                        mesh,
+                        scalar_lanes,
+                        neg_hit_threshold,
+                        pool.as_deref(),
+                    ));
+                }
+                hits
+            },
+            |mut a, mut b| {
+                a.append(&mut b);
+                a
+            },
+        );
+        drop(jobs);
         drop(lanes);
         let task_context = &mut world.task_contexts[0];
         for &contact_id in &hits {

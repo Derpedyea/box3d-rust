@@ -4,8 +4,7 @@
 //! SPDX-License-Identifier: MIT
 
 use super::ContactConstraint;
-use crate::body::{body_flags, IDENTITY_BODY_STATE};
-use crate::core::NULL_INDEX;
+use crate::body::body_flags;
 use crate::math_functions::{add, cross, mul_add, mul_mv, mul_sub, mul_sv, sub};
 use crate::solver::states::SolverStates;
 
@@ -13,16 +12,8 @@ fn warm_start_one(contact_constraint: &ContactConstraint, states: &SolverStates)
     let index_a = contact_constraint.index_a;
     let index_b = contact_constraint.index_b;
 
-    let mut state_a = if index_a == NULL_INDEX {
-        IDENTITY_BODY_STATE
-    } else {
-        states.get(index_a as usize)
-    };
-    let mut state_b = if index_b == NULL_INDEX {
-        IDENTITY_BODY_STATE
-    } else {
-        states.get(index_b as usize)
-    };
+    let mut state_a = states.get_or_identity(index_a);
+    let mut state_b = states.get_or_identity(index_b);
 
     let mut v_a = state_a.linear_velocity;
     let mut w_a = state_a.angular_velocity;

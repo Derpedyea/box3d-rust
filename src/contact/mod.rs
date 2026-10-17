@@ -8,7 +8,7 @@
 
 use crate::core::NULL_INDEX;
 use crate::distance::SimplexCache;
-use crate::manifold::{Manifold, SatCache};
+use crate::manifold::SatCache;
 use crate::math_functions::{Quat, Transform, Vec3, QUAT_IDENTITY, TRANSFORM_IDENTITY, VEC3_ZERO};
 
 /// Contact flag bits. (enum b3ContactFlags)
@@ -153,7 +153,7 @@ pub struct Contact {
     /// contact_flags bits
     pub flags: u32,
 
-    pub manifolds: Vec<Manifold>,
+    pub manifolds: crate::manifold::ManifoldList,
 
     /// Cache for contact recycling.
     pub cached_rotation_a: Quat,
@@ -197,7 +197,7 @@ impl Default for Contact {
             encoded_body_sim_a: NULL_INDEX,
             encoded_body_sim_b: NULL_INDEX,
             flags: 0,
-            manifolds: Vec::new(),
+            manifolds: crate::manifold::ManifoldList::Empty,
             cached_rotation_a: QUAT_IDENTITY,
             cached_rotation_b: QUAT_IDENTITY,
             cached_relative_pose: TRANSFORM_IDENTITY,

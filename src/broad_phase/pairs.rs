@@ -744,7 +744,7 @@ pub fn update_broad_phase_pairs(world: &mut World) {
     // C sorts with QSORT (an introsort) on the raw u64 keys with `<`. The keys are plain
     // integers, so equal keys are indistinguishable and every correct sort yields the
     // same sequence; an unstable std sort is equivalent.
-    pair_keys.sort_unstable();
+    crate::parallel::sort_unstable(world.thread_pool.as_deref(), &mut pair_keys);
 
     for i in 0..pair_keys.len() {
         let key = pair_keys[i];

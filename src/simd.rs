@@ -46,7 +46,9 @@ pub fn set_w(a: f32, b: f32, c: f32, d: f32) -> FloatW {
 /// (b3LoadW)
 #[inline]
 pub fn load_w(data: &[f32]) -> FloatW {
-    f32x4::new([data[0], data[1], data[2], data[3]])
+    // One bounds check, then a single 16-byte load.
+    let lanes: &[f32; 4] = data[..4].try_into().expect("four lanes");
+    f32x4::new(*lanes)
 }
 
 /// (b3StoreW)
@@ -108,6 +110,14 @@ pub fn mul_add_w(a: FloatW, b: FloatW, c: FloatW) -> FloatW {
 #[inline]
 pub fn min_w(a: FloatW, b: FloatW) -> FloatW {
     a.cmp_le(b).blend(a, b)
+}
+
+/// Lane-wise minimum for inputs that are never equal and never NaN, where every min
+/// definition agrees: one instruction (minps / vminq / f32x4.pmin) instead of a compare and
+/// blend. The SAT support search uses it on values with distinct embedded indices.
+#[inline]
+pub fn min_distinct_w(a: FloatW, b: FloatW) -> FloatW {
+    a.fast_min(b)
 }
 
 /// `a >= b ? a : b` per lane, as the scalar path. (b3MaxW)

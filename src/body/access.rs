@@ -113,7 +113,7 @@ pub fn body_get_contact_data(world: &World, body_id: BodyId, capacity: usize) ->
                     world0: body_id.world0,
                     generation: shape_b.generation,
                 },
-                manifolds: contact.manifolds.clone(),
+                manifolds: contact.manifolds.to_vec(),
             });
         }
     }

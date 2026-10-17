@@ -82,33 +82,56 @@ pub fn prepare_contacts_convex(
     enable_warm_starting: bool,
     pool: Option<&crate::parallel::ThreadPool>,
 ) -> bool {
-    let any_restitution = std::sync::atomic::AtomicBool::new(false);
-    crate::parallel::map_chunks_into(pool, lanes, SIMD_WIDTH, constraints, |chunk| {
-        let (constraint, restitution) =
-            prepare_one_convex(chunk, sims, states, enable_warm_starting);
-        if restitution {
-            any_restitution.store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        constraint
-    });
-    any_restitution.into_inner()
-}
-
-/// One wide constraint from up to four contacts. Returns it and whether a lane has
-/// restitution.
-fn prepare_one_convex(
-    chunk: &mut [&mut Contact],
-    sims: &[BodySim],
-    states: &SolverStates,
-    enable_warm_starting: bool,
-) -> (ContactConstraintWide, bool) {
     let zero_sim = BodySim {
         inv_mass: 0.0,
         inv_inertia_world: crate::math_functions::MAT3_ZERO,
         ..BodySim::default()
     };
     let zero_manifold = Manifold::default();
+    let zero_contact = Contact {
+        friction: 0.0,
+        restitution: 0.0,
+        rolling_resistance: 0.0,
+        tangent_velocity: crate::math_functions::VEC3_ZERO,
+        ..Contact::default()
+    };
 
+    // Reuse last step's constraints: prepare overwrites every field.
+    let wide_count = lanes.len().div_ceil(SIMD_WIDTH);
+    constraints.truncate(wide_count);
+    constraints.resize_with(wide_count, ContactConstraintWide::zeroed);
+
+    let any_restitution = std::sync::atomic::AtomicBool::new(false);
+    crate::parallel::zip_mut(pool, constraints, lanes, SIMD_WIDTH, |constraint, chunk| {
+        let restitution = prepare_one_convex(
+            constraint,
+            chunk,
+            sims,
+            states,
+            enable_warm_starting,
+            &zero_sim,
+            &zero_manifold,
+            &zero_contact,
+        );
+        if restitution {
+            any_restitution.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    });
+    any_restitution.into_inner()
+}
+
+/// Write the wide constraint of up to four contacts into `out`, in place (it's large).
+/// Returns whether a lane has restitution.
+fn prepare_one_convex(
+    out: &mut ContactConstraintWide,
+    chunk: &mut [&mut Contact],
+    sims: &[BodySim],
+    states: &SolverStates,
+    enable_warm_starting: bool,
+    zero_sim: &BodySim,
+    zero_manifold: &Manifold,
+    zero_contact: &Contact,
+) -> bool {
     let zero_w_ = zero_w();
     let one_w = splat_w(1.0);
     let two_w = splat_w(2.0);
@@ -151,54 +174,47 @@ fn prepare_one_convex(
 
         let sim_lanes_a: [&BodySim; SIMD_WIDTH] = core::array::from_fn(|i| {
             if sim_index_a[i] == crate::core::NULL_INDEX {
-                &zero_sim
+                zero_sim
             } else {
                 &sims[sim_index_a[i] as usize]
             }
         });
         let sim_lanes_b: [&BodySim; SIMD_WIDTH] = core::array::from_fn(|i| {
             if sim_index_b[i] == crate::core::NULL_INDEX {
-                &zero_sim
+                zero_sim
             } else {
                 &sims[sim_index_b[i] as usize]
             }
         });
-        let contact_lanes: [Option<&Contact>; SIMD_WIDTH] = core::array::from_fn(|i| {
+        // Empty lanes read zeros, like C's b3_zeroContact and b3_zeroManifold.
+        let contact_lanes: [&Contact; SIMD_WIDTH] = core::array::from_fn(|i| {
             if lane_ids[i] == EMPTY_LANE {
-                None
+                zero_contact
             } else {
-                Some(&*chunk[i])
+                &*chunk[i]
             }
         });
-        let manifold_lanes: [&Manifold; SIMD_WIDTH] =
-            core::array::from_fn(|i| match contact_lanes[i] {
-                Some(c) => &c.manifolds[0],
-                None => &zero_manifold,
-            });
+        let manifold_lanes: [&Manifold; SIMD_WIDTH] = core::array::from_fn(|i| {
+            if lane_ids[i] == EMPTY_LANE {
+                zero_manifold
+            } else {
+                &contact_lanes[i].manifolds[0]
+            }
+        });
 
         let m_a = gather_lanes!(sim_lanes_a, |l| sim_lanes_a[l].inv_mass);
         let m_b = gather_lanes!(sim_lanes_b, |l| sim_lanes_b[l].inv_mass);
         let i_a = gather_inv_inertia_w(&sim_lanes_a);
         let i_b = gather_inv_inertia_w(&sim_lanes_b);
 
-        let contact_field = |l: usize, f: fn(&Contact) -> f32| match contact_lanes[l] {
-            Some(c) => f(c),
-            None => 0.0,
-        };
-        let friction = gather_lanes!(contact_lanes, |l| contact_field(l, |c| c.friction));
-        let rolling_resistance = gather_lanes!(contact_lanes, |l| contact_field(l, |c| c
-            .rolling_resistance));
-        let restitution = gather_lanes!(contact_lanes, |l| contact_field(l, |c| c.restitution));
+        let friction = gather_lanes!(contact_lanes, |l| contact_lanes[l].friction);
+        let rolling_resistance =
+            gather_lanes!(contact_lanes, |l| contact_lanes[l].rolling_resistance);
+        let restitution = gather_lanes!(contact_lanes, |l| contact_lanes[l].restitution);
         let tangent_velocity = Vec3W {
-            x: gather_lanes!(contact_lanes, |l| contact_field(l, |c| c
-                .tangent_velocity
-                .x)),
-            y: gather_lanes!(contact_lanes, |l| contact_field(l, |c| c
-                .tangent_velocity
-                .y)),
-            z: gather_lanes!(contact_lanes, |l| contact_field(l, |c| c
-                .tangent_velocity
-                .z)),
+            x: gather_lanes!(contact_lanes, |l| contact_lanes[l].tangent_velocity.x),
+            y: gather_lanes!(contact_lanes, |l| contact_lanes[l].tangent_velocity.y),
+            z: gather_lanes!(contact_lanes, |l| contact_lanes[l].tangent_velocity.z),
         };
 
         let normal = Vec3W {
@@ -273,7 +289,8 @@ fn prepare_one_convex(
             relative_velocities: zero_w_,
             restitution_impulses: zero_w_,
         };
-        let mut points = [empty_point; MAX_MANIFOLD_POINTS];
+        let points = &mut out.points;
+        *points = [empty_point; MAX_MANIFOLD_POINTS];
 
         for (point_index, cp) in points.iter_mut().enumerate() {
             let point_mask = greater_than_w(point_count_w, splat_w(point_index as f32));
@@ -461,33 +478,30 @@ fn prepare_one_convex(
             }
         }
 
-        let constraint = ContactConstraintWide {
-            index_a,
-            index_b,
-            point_counts,
-            inv_mass_a: m_a,
-            inv_mass_b: m_b,
-            inv_i_a: i_a,
-            inv_i_b: i_b,
-            normal,
-            tangent1,
-            tangent2,
-            center_a,
-            center_b,
-            twist_mass,
-            twist_impulse: c_twist_impulse,
-            tangent_mass,
-            friction_impulse: c_friction_impulse,
-            rolling_mass,
-            rolling_impulse: c_rolling_impulse,
-            friction,
-            rolling_resistance,
-            tangent_velocity1,
-            tangent_velocity2,
-            restitution,
-            contact_ids: lane_ids,
-            points,
-        };
-        (constraint, any_restitution)
+        out.index_a = index_a;
+        out.index_b = index_b;
+        out.point_counts = point_counts;
+        out.inv_mass_a = m_a;
+        out.inv_mass_b = m_b;
+        out.inv_i_a = i_a;
+        out.inv_i_b = i_b;
+        out.normal = normal;
+        out.tangent1 = tangent1;
+        out.tangent2 = tangent2;
+        out.center_a = center_a;
+        out.center_b = center_b;
+        out.twist_mass = twist_mass;
+        out.twist_impulse = c_twist_impulse;
+        out.tangent_mass = tangent_mass;
+        out.friction_impulse = c_friction_impulse;
+        out.rolling_mass = rolling_mass;
+        out.rolling_impulse = c_rolling_impulse;
+        out.friction = friction;
+        out.rolling_resistance = rolling_resistance;
+        out.tangent_velocity1 = tangent_velocity1;
+        out.tangent_velocity2 = tangent_velocity2;
+        out.restitution = restitution;
+        out.contact_ids = lane_ids;
+        any_restitution
     }
 }

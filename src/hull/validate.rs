@@ -32,17 +32,19 @@ pub fn find_hull_support_vertex(hull: &HullData, direction: Vec3) -> i32 {
     let mut best_dot_w = splat_w(-f32::MAX);
     let mut best_index_w = splat_w(-1.0);
 
-    let mut i = 0;
-    while i < soa_vertex_count {
+    let lanes = vx
+        .chunks_exact(4)
+        .zip(vy.chunks_exact(4))
+        .zip(vz.chunks_exact(4));
+    for ((x, y), z) in lanes {
         let d = add_w(
-            add_w(mul_w(dx, load_w(&vx[i..])), mul_w(dy, load_w(&vy[i..]))),
-            mul_w(dz, load_w(&vz[i..])),
+            add_w(mul_w(dx, load_w(x)), mul_w(dy, load_w(y))),
+            mul_w(dz, load_w(z)),
         );
         let mask = greater_than_w(d, best_dot_w);
         best_dot_w = blend_w(best_dot_w, d, mask);
         best_index_w = blend_w(best_index_w, index, mask);
         index = add_w(index, four);
-        i += 4;
     }
 
     let mut dots = [0.0f32; 4];

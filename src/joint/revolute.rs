@@ -13,7 +13,7 @@
 
 use super::solve_point_constraint;
 use super::{get_joint_sim_check_type, get_joint_sim_check_type_ref, JointSim, JointType};
-use crate::body::{body_flags, get_body_transform, IDENTITY_BODY_STATE};
+use crate::body::{body_flags, get_body_transform};
 use crate::core::NULL_INDEX;
 use crate::id::JointId;
 use crate::math_functions::{
@@ -410,16 +410,8 @@ pub fn warm_start_revolute_joint(base: &mut JointSim, states: &SolverStates) {
 
     let joint = base.revolute_mut();
 
-    let mut state_a = if joint.index_a == NULL_INDEX {
-        IDENTITY_BODY_STATE
-    } else {
-        states.get(joint.index_a as usize)
-    };
-    let mut state_b = if joint.index_b == NULL_INDEX {
-        IDENTITY_BODY_STATE
-    } else {
-        states.get(joint.index_b as usize)
-    };
+    let mut state_a = states.get_or_identity(joint.index_a);
+    let mut state_b = states.get_or_identity(joint.index_b);
 
     let mut v_a = state_a.linear_velocity;
     let mut w_a = state_a.angular_velocity;
@@ -478,16 +470,8 @@ pub fn solve_revolute_joint(
     let constraint_softness = base.constraint_softness;
 
     let joint = base.revolute_mut();
-    let mut state_a = if joint.index_a == NULL_INDEX {
-        IDENTITY_BODY_STATE
-    } else {
-        states.get(joint.index_a as usize)
-    };
-    let mut state_b = if joint.index_b == NULL_INDEX {
-        IDENTITY_BODY_STATE
-    } else {
-        states.get(joint.index_b as usize)
-    };
+    let mut state_a = states.get_or_identity(joint.index_a);
+    let mut state_b = states.get_or_identity(joint.index_b);
 
     let mut v_a = state_a.linear_velocity;
     let mut w_a = state_a.angular_velocity;

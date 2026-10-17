@@ -131,6 +131,23 @@ pub struct LocalManifold {
     pub triangle_flags: i32,
 }
 
+impl LocalManifold {
+    /// Reset everything but the point buffer, whose entries past `point_count` are never
+    /// read. (C points its manifold at an uninitialized stack array.)
+    pub fn reset_header(&mut self) {
+        self.normal = VEC3_ZERO;
+        self.triangle_normal = VEC3_ZERO;
+        self.point_count = 0;
+        self.triangle_index = 0;
+        self.i1 = 0;
+        self.i2 = 0;
+        self.i3 = 0;
+        self.squared_distance = 0.0;
+        self.feature = TriangleFeature::None;
+        self.triangle_flags = 0;
+    }
+}
+
 impl Default for LocalManifold {
     fn default() -> Self {
         LocalManifold {

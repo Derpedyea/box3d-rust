@@ -69,11 +69,13 @@ impl ContactParams {
     }
 }
 
-/// What one contact update may write: its contact and its block's counters.
+/// What one contact update may write: its contact, its block's counters, and the block's
+/// local manifold scratch (see [`with_local_manifold`]).
 pub(crate) struct NarrowCtx<'a> {
     pub contact: &'a mut Contact,
     pub stats: &'a mut CollideStats,
     pub params: &'a ContactParams,
+    pub local: &'a mut LocalManifold,
 }
 
 /// A borrowed convex geometry: a shape's own, or a compound child's.
@@ -153,6 +155,13 @@ fn shape_rolling_radius(geometry: ConvexGeometry<'_>) -> f32 {
     }
 }
 
+thread_local! {
+    /// The convex narrow phase's local manifold, zeroed once per thread: its 32-point buffer
+    /// cost more to clear per contact than many contact updates.
+    static CONVEX_MANIFOLD: std::cell::RefCell<Box<LocalManifold>> =
+        std::cell::RefCell::new(Box::new(LocalManifold::default()));
+}
+
 /// (b3ComputeConvexManifold)
 fn compute_convex_manifold(
     nc: &mut NarrowCtx<'_>,
@@ -161,10 +170,36 @@ fn compute_convex_manifold(
     geom_b: ConvexGeometry<'_>,
     xf_b: WorldTransform,
 ) -> bool {
+    nc.local.reset_header();
+    compute_convex_manifold_in(
+        &mut *nc.contact,
+        &mut *nc.stats,
+        &mut *nc.local,
+        geom_a,
+        xf_a,
+        geom_b,
+        xf_b,
+    )
+}
+
+/// Run `f` with this thread's local manifold scratch, borrowed once for a block of contacts.
+pub(crate) fn with_local_manifold<R>(f: impl FnOnce(&mut LocalManifold) -> R) -> R {
+    CONVEX_MANIFOLD.with_borrow_mut(|local| f(local))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_convex_manifold_in(
+    contact: &mut Contact,
+    stats: &mut CollideStats,
+    geom_manifold: &mut LocalManifold,
+    geom_a: ConvexGeometry<'_>,
+    xf_a: WorldTransform,
+    geom_b: ConvexGeometry<'_>,
+    xf_b: WorldTransform,
+) -> bool {
     let type_a = geom_a.shape_type();
     let type_b = geom_b.shape_type();
 
-    let mut geom_manifold = LocalManifold::default();
     let capacity = MAX_MANIFOLD_POINTS as i32;
     let transform_b_to_a = inv_mul_world_transforms(xf_a, xf_b);
 
@@ -178,7 +213,7 @@ fn compute_convex_manifold(
                 unreachable!()
             };
             collide_spheres(
-                &mut geom_manifold,
+                geom_manifold,
                 capacity,
                 sphere_a,
                 sphere_b,
@@ -194,7 +229,7 @@ fn compute_convex_manifold(
                     unreachable!()
                 };
                 collide_capsule_and_sphere(
-                    &mut geom_manifold,
+                    geom_manifold,
                     capacity,
                     capsule_a,
                     sphere_b,
@@ -206,7 +241,7 @@ fn compute_convex_manifold(
                     unreachable!()
                 };
                 collide_capsules(
-                    &mut geom_manifold,
+                    geom_manifold,
                     capacity,
                     capsule_a,
                     capsule_b,
@@ -219,7 +254,7 @@ fn compute_convex_manifold(
             let ConvexGeometry::Hull(hull_a) = geom_a else {
                 unreachable!()
             };
-            let cache = convex_cache(&mut nc.contact.geometry);
+            let cache = convex_cache(&mut contact.geometry);
 
             if type_b == ShapeType::Sphere {
                 let ConvexGeometry::Sphere(sphere_b) = geom_b else {
@@ -227,7 +262,7 @@ fn compute_convex_manifold(
                 };
                 let simplex = ensure_simplex_cache(cache);
                 collide_hull_and_sphere(
-                    &mut geom_manifold,
+                    geom_manifold,
                     capacity,
                     hull_a,
                     sphere_b,
@@ -240,7 +275,7 @@ fn compute_convex_manifold(
                 };
                 let simplex = ensure_simplex_cache(cache);
                 collide_hull_and_capsule(
-                    &mut geom_manifold,
+                    geom_manifold,
                     capacity,
                     hull_a,
                     capsule_b,
@@ -254,15 +289,15 @@ fn compute_convex_manifold(
                 };
                 let sat = ensure_sat_cache(cache);
                 collide_hulls(
-                    &mut geom_manifold,
+                    geom_manifold,
                     capacity,
                     hull_a,
                     hull_b,
                     transform_b_to_a,
                     sat,
                 );
-                nc.stats.sat_call_count += 1;
-                nc.stats.sat_cache_hit_count += sat.hit as i32;
+                stats.sat_call_count += 1;
+                stats.sat_cache_hit_count += sat.hit as i32;
             }
         }
         _ => {
@@ -272,14 +307,14 @@ fn compute_convex_manifold(
     }
 
     if geom_manifold.point_count == 0 {
-        nc.contact.manifolds.clear();
+        contact.manifolds.clear();
         return false;
     }
 
     let mut old_points: [ManifoldPoint; MAX_MANIFOLD_POINTS];
     let old_count;
     {
-        let contact = &mut *nc.contact;
+        let contact = &mut *contact;
         if contact.manifolds.is_empty() {
             contact.manifolds.push(Manifold::default());
             old_points = [ManifoldPoint::default(); MAX_MANIFOLD_POINTS];
@@ -292,7 +327,7 @@ fn compute_convex_manifold(
 
     let matrix_a = make_matrix_from_quat(xf_a.q);
     {
-        let manifold = &mut nc.contact.manifolds[0];
+        let manifold = &mut contact.manifolds[0];
         debug_assert!(
             0 < geom_manifold.point_count
                 && geom_manifold.point_count as usize <= MAX_MANIFOLD_POINTS
@@ -453,10 +488,12 @@ pub fn update_contact(
 ) -> bool {
     let params = ContactParams::new(world);
     let mut stats = CollideStats::default();
+    let mut local = LocalManifold::default();
     let mut nc = NarrowCtx {
         contact: &mut world.contacts[contact_id as usize],
         stats: &mut stats,
         params: &params,
+        local: &mut local,
     };
     let touching = update_contact_in(
         &mut nc,

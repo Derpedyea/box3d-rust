@@ -384,7 +384,7 @@ fn update_shape_aabbs(world: &mut World) -> Vec<(i32, Aabb)> {
     crate::parallel::map_reduce_blocks(
         thread_pool.as_deref(),
         &mut items,
-        64,
+        512,
         |block| {
             let mut moved = Vec::new();
             for (shape, fat_aabb) in block.iter_mut() {
@@ -451,13 +451,11 @@ pub(super) fn finalize_bodies(
         };
 
         // The awake bodies, borrowed in sim order.
-        let mut awake: Vec<Option<&mut Body>> = (0..awake_body_count).map(|_| None).collect();
-        for body in bodies.iter_mut() {
-            if body.set_index == AWAKE_SET && body.id != NULL_INDEX {
-                let local_index = body.local_index as usize;
-                awake[local_index] = Some(body);
-            }
-        }
+        let awake =
+            crate::parallel::borrow_by_slot(pool.as_deref(), bodies, awake_body_count, |body| {
+                (body.set_index == AWAKE_SET && body.id != NULL_INDEX)
+                    .then_some(body.local_index as usize)
+            });
 
         let set = &mut solver_sets[AWAKE_SET as usize];
         let mut items: Vec<(
@@ -473,15 +471,13 @@ pub(super) fn finalize_bodies(
             .zip(body_move_events.iter_mut())
             .zip(awake)
             .enumerate()
-            .map(|(i, (((sim, state), event), body))| {
-                (i, sim, state, event, body.expect("awake body"))
-            })
+            .map(|(i, (((sim, state), event), body))| (i, sim, state, event, body))
             .collect();
 
         crate::parallel::map_reduce_blocks(
             pool.as_deref(),
             &mut items,
-            32,
+            256,
             |block| {
                 let mut out = FinalizeOut::default();
                 for (i, sim, state, event, body) in block.iter_mut() {

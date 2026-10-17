@@ -24,8 +24,8 @@ use crate::math_functions::{
 };
 use crate::simd::{
     add_vw, and_w, any_true_w, blend_w, div_w, dot_w, embed_index_w, greater_than_w, lane,
-    less_than_w, load_vw, load_w, max_w, min_index_w, min_w, mul_add_svw, mul_svw, mul_w, neg_vw,
-    neg_w, splat_vw, splat_w, sqrt_w, store_vw, store_w, sub_vw, sub_w, zero_w, Vec3W,
+    less_than_w, load_vw, load_w, max_w, min_distinct_w, min_index_w, mul_add_svw, mul_svw, mul_w,
+    neg_vw, neg_w, splat_vw, splat_w, sqrt_w, store_vw, store_w, sub_vw, sub_w, zero_w, Vec3W,
 };
 use std::cell::RefCell;
 
@@ -114,6 +114,7 @@ fn negative_transform_from_soa(
 ///
 /// The support is then recomputed exactly as `dot(normal, vertex)`, without the embedded index.
 /// (b3GetSupportWide)
+#[inline(always)]
 fn get_support_wide(
     normal: Vec3,
     vx: &[f32],
@@ -129,17 +130,20 @@ fn get_support_wide(
     let mut min_value = splat_w(f32::INFINITY);
 
     // Tail lanes hold vertex 0 with index bits >= vertexCount, so they never become the min value.
-    let mut i = 0;
-    while i < n {
-        let v = load_vw(&vx[i..], &vy[i..], &vz[i..]);
+    let n = n.div_ceil(4) * 4;
+    let lanes = vx[..n]
+        .chunks_exact(4)
+        .zip(vy[..n].chunks_exact(4))
+        .zip(vz[..n].chunks_exact(4));
+    for (k, ((x, y), z)) in lanes.enumerate() {
+        let v = load_vw(x, y, z);
         let d = dot_w(normal_w, v);
 
         // This is always positive.
         let value = sub_w(bias_v, d);
-        let augmented_value = embed_index_w(value, i as i32, HULL_BIT_COUNT);
-        min_value = min_w(min_value, augmented_value);
-
-        i += 4;
+        let augmented_value = embed_index_w(value, (4 * k) as i32, HULL_BIT_COUNT);
+        // Values are positive with distinct embedded indices: never equal, never NaN.
+        min_value = min_distinct_w(min_value, augmented_value);
     }
 
     // One horizontal min, the winning lane's value and index bits ride through.
@@ -153,6 +157,7 @@ fn get_support_wide(
 
 /// (b3GetFaceSeparation)
 #[allow(clippy::too_many_arguments)]
+#[inline(always)]
 fn get_face_separation(
     direction: Vec3,
     plane_separation: f32,
@@ -284,10 +289,12 @@ const NV: usize = crate::constants::MAX_HULL_VERTICES as usize + SIMD_WIDTH;
 /// one set once and reuses it. Every lane a query reads, it writes first (tail lanes
 /// included), as in C.
 struct SatScratch {
-    dot_a: [f32; NF],
-    dot_b: [f32; NF],
-    edge_indices_a: [i32; NE],
-    edge_indices_b: [i32; crate::constants::MAX_HULL_EDGES as usize],
+    // 256 entries: indexed by u8 face ids and edge counts, so the lookups need no bounds
+    // checks. Only the first NF (or the edge count) are used.
+    dot_a: [f32; 256],
+    dot_b: [f32; 256],
+    edge_indices_a: [i32; 256],
+    edge_indices_b: [i32; 256],
     b_fnx: [f32; NF],
     b_fny: [f32; NF],
     b_fnz: [f32; NF],
@@ -311,10 +318,10 @@ struct SatScratch {
 
 thread_local! {
     static SAT_SCRATCH: RefCell<Box<SatScratch>> = RefCell::new(Box::new(SatScratch {
-        dot_a: [0.0; NF],
-        dot_b: [0.0; NF],
-        edge_indices_a: [0; NE],
-        edge_indices_b: [0; crate::constants::MAX_HULL_EDGES as usize],
+        dot_a: [0.0; 256],
+        dot_b: [0.0; 256],
+        edge_indices_a: [0; 256],
+        edge_indices_b: [0; 256],
         b_fnx: [0.0; NF],
         b_fny: [0.0; NF],
         b_fnz: [0.0; NF],
@@ -611,28 +618,31 @@ fn compute_separating_axis_in(
     let half_edge_count_a = hull_a.edge_count;
     let half_edges_a = get_hull_edges(hull_a);
     let mut na = 0usize;
-    let mut i = 0;
-    while i < half_edge_count_a {
-        let i1 = half_edges_a[i as usize].face as usize;
-        let i2 = half_edges_a[(i + 1) as usize].face as usize;
+    for (k, pair) in half_edges_a[..half_edge_count_a as usize]
+        .chunks_exact(2)
+        .enumerate()
+    {
+        let i1 = pair[0].face as usize;
+        let i2 = pair[1].face as usize;
         let c = dot(planes_a[i1].normal, planes_a[i2].normal);
-        edge_indices_a[na] = i;
+        // At most MAX_HULL_EDGES / 2 candidates, so the mask never changes the index.
+        edge_indices_a[na & 255] = 2 * k as i32;
         na += test_edge_candidate(dot_a[i1], dot_a[i2], c, edge_bound);
-        i += 2;
     }
 
     // Similar for edges of B.
     let half_edge_count_b = hull_b.edge_count;
     let half_edges_b = get_hull_edges(hull_b);
     let mut nb = 0usize;
-    let mut i = 0;
-    while i < half_edge_count_b {
-        let i1 = half_edges_b[i as usize].face as usize;
-        let i2 = half_edges_b[(i + 1) as usize].face as usize;
+    for (k, pair) in half_edges_b[..half_edge_count_b as usize]
+        .chunks_exact(2)
+        .enumerate()
+    {
+        let i1 = pair[0].face as usize;
+        let i2 = pair[1].face as usize;
         let c = dot(planes_b[i1].normal, planes_b[i2].normal);
-        edge_indices_b[nb] = i;
+        edge_indices_b[nb & 255] = 2 * k as i32;
         nb += test_edge_candidate(dot_b[i1], dot_b[i2], c, edge_bound);
-        i += 2;
     }
 
     if na == 0 || nb == 0 {

@@ -477,7 +477,7 @@ pub fn des_contacts(r: &mut SnapReader<'_>) -> Vec<Contact> {
             for _ in 0..manifold_count {
                 mans.push(des_manifold(r));
             }
-            c.manifolds = mans;
+            c.manifolds = mans.into();
         } else {
             c.manifolds.clear();
         }
@@ -560,7 +560,7 @@ fn des_contact_scalars(r: &mut SnapReader<'_>) -> Contact {
         encoded_body_sim_a,
         encoded_body_sim_b,
         flags,
-        manifolds: Vec::new(),
+        manifolds: crate::manifold::ManifoldList::Empty,
         cached_rotation_a,
         cached_rotation_b,
         cached_relative_pose,

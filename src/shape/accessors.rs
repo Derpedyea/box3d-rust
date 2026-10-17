@@ -324,7 +324,7 @@ pub fn shape_get_contact_data(
                     world0: shape_id.world0,
                     generation: shape_b.generation,
                 },
-                manifolds: contact.manifolds.clone(),
+                manifolds: contact.manifolds.to_vec(),
             });
         }
     }

@@ -4,8 +4,7 @@
 //! SPDX-License-Identifier: MIT
 
 use super::ContactConstraint;
-use crate::body::{body_flags, IDENTITY_BODY_STATE};
-use crate::core::NULL_INDEX;
+use crate::body::body_flags;
 use crate::math_functions::{
     add, cross, dot, max_float, min_float, mul_add, mul_mv, mul_sub, mul_sv, rotate_vector, sub,
 };
@@ -39,20 +38,12 @@ pub fn apply_restitution(
         let m_b = contact_constraint.inv_mass_b;
         let i_b = contact_constraint.inv_i_b;
 
-        let mut state_a = if index_a == NULL_INDEX {
-            IDENTITY_BODY_STATE
-        } else {
-            states.get(index_a as usize)
-        };
+        let mut state_a = states.get_or_identity(index_a);
         let mut v_a = state_a.linear_velocity;
         let mut w_a = state_a.angular_velocity;
         let dq_a = state_a.delta_rotation;
 
-        let mut state_b = if index_b == NULL_INDEX {
-            IDENTITY_BODY_STATE
-        } else {
-            states.get(index_b as usize)
-        };
+        let mut state_b = states.get_or_identity(index_b);
         let mut v_b = state_b.linear_velocity;
         let mut w_b = state_b.angular_velocity;
         let dq_b = state_b.delta_rotation;

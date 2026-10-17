@@ -23,8 +23,51 @@ use crate::math_functions::{
     normalize, plane_separation, rotate_vector, sub, transform_point, Transform,
 };
 
+/// Clipping buffers. C declares them uninitialized on the stack; zeroing ~6 KB per contact
+/// cost more than the clipping, so each thread zeroes one set once and reuses it. Every
+/// element read is written first.
+struct ClipScratch {
+    buffer1: [ClipVertex; MAX_CLIP_POINTS],
+    buffer2: [ClipVertex; MAX_CLIP_POINTS],
+    points: [LocalManifoldPoint; MAX_CLIP_POINTS],
+}
+
+thread_local! {
+    static CLIP_SCRATCH: std::cell::RefCell<Box<ClipScratch>> =
+        std::cell::RefCell::new(Box::new(ClipScratch {
+            buffer1: [ClipVertex::default(); MAX_CLIP_POINTS],
+            buffer2: [ClipVertex::default(); MAX_CLIP_POINTS],
+            points: [LocalManifoldPoint::default(); MAX_CLIP_POINTS],
+        }));
+}
+
 /// Build face-A contact by clipping the incident face of B. (static b3BuildFaceAContact)
 fn build_face_a_contact(
+    manifold: &mut LocalManifold,
+    capacity: i32,
+    hull_a: &HullData,
+    hull_b: &HullData,
+    transform_b_to_a: Transform,
+    query: SeparatingAxis,
+    cache: &mut SatCache,
+) -> bool {
+    CLIP_SCRATCH.with_borrow_mut(|scratch| {
+        build_face_a_contact_in(
+            scratch,
+            manifold,
+            capacity,
+            hull_a,
+            hull_b,
+            transform_b_to_a,
+            query,
+            cache,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_face_a_contact_in(
+    scratch: &mut ClipScratch,
     manifold: &mut LocalManifold,
     capacity: i32,
     hull_a: &HullData,
@@ -49,10 +92,12 @@ fn build_face_a_contact(
     let ref_normal_in_b = inv_rotate_vector(transform_b_to_a.q, ref_plane.normal);
     let inc_face = find_incident_face(hull_b, ref_normal_in_b, query.index_b);
 
-    let mut buffer1 = [ClipVertex::default(); MAX_CLIP_POINTS];
-    let mut buffer2 = [ClipVertex::default(); MAX_CLIP_POINTS];
-    let mut point_count =
-        build_polygon(&mut buffer1, transform_b_to_a, hull_b, inc_face, ref_plane);
+    let ClipScratch {
+        buffer1,
+        buffer2,
+        points,
+    } = scratch;
+    let mut point_count = build_polygon(buffer1, transform_b_to_a, hull_b, inc_face, ref_plane);
 
     // Clip incident face against side planes of reference face.
     // C swaps input/output pointers; we track which buffer is current with a bool.
@@ -73,8 +118,8 @@ fn build_face_a_contact(
 
         point_count = if input_is_buffer1 {
             clip_polygon(
-                &mut buffer2,
-                &buffer1,
+                buffer2,
+                buffer1,
                 point_count,
                 clip_plane,
                 edge_index,
@@ -82,8 +127,8 @@ fn build_face_a_contact(
             )
         } else {
             clip_polygon(
-                &mut buffer1,
-                &buffer2,
+                buffer1,
+                buffer2,
                 point_count,
                 clip_plane,
                 edge_index,
@@ -113,7 +158,6 @@ fn build_face_a_contact(
         &buffer2[..]
     };
 
-    let mut points = [LocalManifoldPoint::default(); MAX_CLIP_POINTS];
     let mut min_separation = f32::MAX;
 
     manifold.normal = ref_plane.normal;
@@ -141,7 +185,7 @@ fn build_face_a_contact(
         return false;
     }
 
-    reduce_manifold_points(manifold, capacity, &mut points, point_count);
+    reduce_manifold_points(manifold, capacity, &mut points[..], point_count);
 
     cache.separation = min_separation;
     cache.type_ = SeparatingFeature::FaceAxisA as u8;

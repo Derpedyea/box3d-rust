@@ -19,7 +19,7 @@ pub use restitution::apply_restitution_convex;
 pub use solve::{push_contacts_convex, solve_contacts_convex, warm_start_contacts_convex};
 pub use store::store_impulses_convex;
 
-use crate::body::{body_flags, BodyState, IDENTITY_BODY_STATE};
+use crate::body::body_flags;
 use crate::constants::MAX_MANIFOLD_POINTS;
 use crate::core::{NULL_INDEX, SIMD_WIDTH};
 use crate::solver::states::SolverStates;
@@ -142,6 +142,53 @@ pub struct ContactConstraintWide {
 }
 
 impl ContactConstraintWide {
+    /// An all-zero constraint, for growing constraint arrays that prepare then overwrites.
+    pub fn zeroed() -> ContactConstraintWide {
+        let z = FloatW::ZERO;
+        let point = ContactConstraintPointWide {
+            anchor_as: VEC3W_ZERO,
+            anchor_bs: VEC3W_ZERO,
+            base_separations: z,
+            normal_impulses: z,
+            total_normal_impulses: z,
+            normal_masses: z,
+            lever_arms: z,
+            relative_velocities: z,
+            restitution_impulses: z,
+        };
+        ContactConstraintWide {
+            index_a: [0; SIMD_WIDTH],
+            index_b: [0; SIMD_WIDTH],
+            point_counts: [0; SIMD_WIDTH],
+            inv_mass_a: z,
+            inv_mass_b: z,
+            inv_i_a: SYM3W_ZERO,
+            inv_i_b: SYM3W_ZERO,
+            normal: VEC3W_ZERO,
+            tangent1: VEC3W_ZERO,
+            tangent2: VEC3W_ZERO,
+            center_a: VEC3W_ZERO,
+            center_b: VEC3W_ZERO,
+            twist_mass: z,
+            twist_impulse: z,
+            tangent_mass: SymMatrix2W {
+                cxx: z,
+                cxy: z,
+                cyy: z,
+            },
+            friction_impulse: Vec2W { x: z, y: z },
+            rolling_mass: SYM3W_ZERO,
+            rolling_impulse: VEC3W_ZERO,
+            friction: z,
+            rolling_resistance: z,
+            tangent_velocity1: z,
+            tangent_velocity2: z,
+            restitution: z,
+            contact_ids: [EMPTY_LANE; SIMD_WIDTH],
+            points: [point; MAX_MANIFOLD_POINTS],
+        }
+    }
+
     /// Wide point count: the maximum over the four lanes.
     pub fn point_count(&self) -> usize {
         let point_count1 = self.point_counts[0].max(self.point_counts[1]);
@@ -351,47 +398,10 @@ pub fn perp_w(a: Vec3W) -> Vec3W {
     mul_svw(s, p)
 }
 
-/// The four 16-byte rows of a body state.
-#[inline]
-fn state_rows(s: &BodyState) -> [FloatW; 4] {
-    [
-        FloatW::new([
-            s.linear_velocity.x,
-            s.linear_velocity.y,
-            s.linear_velocity.z,
-            s.padding1,
-        ]),
-        FloatW::new([
-            s.angular_velocity.x,
-            s.angular_velocity.y,
-            s.angular_velocity.z,
-            s.padding2,
-        ]),
-        FloatW::new([
-            s.delta_position.x,
-            s.delta_position.y,
-            s.delta_position.z,
-            f32::from_bits(s.flags),
-        ]),
-        FloatW::new([
-            s.delta_rotation.v.x,
-            s.delta_rotation.v.y,
-            s.delta_rotation.v.z,
-            s.delta_rotation.s,
-        ]),
-    ]
-}
-
 /// Indices are base 1 with 0 for null. (b3GatherBodies)
 #[inline]
 pub fn gather_bodies(states: &SolverStates, indices: &[i32; SIMD_WIDTH]) -> BodyStateW {
-    let rows: [[FloatW; 4]; SIMD_WIDTH] = core::array::from_fn(|i| {
-        if indices[i] == 0 {
-            state_rows(&IDENTITY_BODY_STATE)
-        } else {
-            states.rows((indices[i] - 1) as usize)
-        }
-    });
+    let rows: [[FloatW; 4]; SIMD_WIDTH] = core::array::from_fn(|i| states.rows1(indices[i]));
 
     let [vx, vy, vz, _] = FloatW::transpose([rows[0][0], rows[1][0], rows[2][0], rows[3][0]]);
     let [wx, wy, wz, _] = FloatW::transpose([rows[0][1], rows[1][1], rows[2][1], rows[3][1]]);

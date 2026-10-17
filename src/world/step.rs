@@ -9,6 +9,15 @@ use crate::world::{Profile, World};
 impl World {
     /// Advance the world simulation by one time step. (b3World_Step)
     pub fn step(&mut self, time_step: f32, sub_step_count: i32) {
+        // The whole step runs on the pool, so its parallel stages fork from a worker thread
+        // instead of each waking the pool from outside.
+        let pool = self.thread_pool.clone();
+        crate::parallel::install(pool.as_deref(), || {
+            self.step_inner(time_step, sub_step_count)
+        });
+    }
+
+    fn step_inner(&mut self, time_step: f32, sub_step_count: i32) {
         use crate::broad_phase::update_broad_phase_pairs;
         use crate::math_functions::{is_valid_float, max_int, min_float};
         use crate::solver::{make_soft, solve, StepContext};

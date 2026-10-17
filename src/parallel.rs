@@ -269,3 +269,130 @@ pub(crate) fn join<A: Send, B: Send>(
     let _ = pool;
     (a(), b())
 }
+
+/// `f(a_i, b chunk i)` for `a` zipped with `b.chunks_mut(chunk)`, across the pool.
+pub(crate) fn zip_mut<A: Send, B: Send>(
+    pool: Option<&ThreadPool>,
+    a: &mut [A],
+    b: &mut [B],
+    chunk: usize,
+    f: impl Fn(&mut A, &mut [B]) + Sync,
+) {
+    debug_assert!(a.len() == b.len().div_ceil(chunk));
+    #[cfg(feature = "parallel")]
+    if let Some(pool) = pool {
+        if a.len() > 8 {
+            use rayon::prelude::*;
+            pool.install(|| {
+                a.par_iter_mut()
+                    .zip(b.par_chunks_mut(chunk))
+                    .with_min_len(4)
+                    .for_each(|(x, y)| f(x, y))
+            });
+            return;
+        }
+    }
+    let _ = pool;
+    for (x, y) in a.iter_mut().zip(b.chunks_mut(chunk)) {
+        f(x, y);
+    }
+}
+
+/// Borrow the items that have a slot into a vector indexed by slot: `out[slot(x)] = x`.
+/// Every slot in `0..slot_count` must be taken exactly once. The scan over `items`, which
+/// reads each item, runs across the pool; placing the borrows is a cheap serial pass.
+pub(crate) fn borrow_by_slot<'a, T: Send>(
+    pool: Option<&ThreadPool>,
+    items: &'a mut [T],
+    slot_count: usize,
+    slot: impl Fn(&T) -> Option<usize> + Sync,
+) -> Vec<&'a mut T> {
+    let mut slots: Vec<Option<&'a mut T>> = Vec::with_capacity(slot_count);
+    slots.resize_with(slot_count, || None);
+    #[cfg(feature = "parallel")]
+    if let Some(pool) = pool {
+        if items.len() > 4096 {
+            use rayon::prelude::*;
+            let found: Vec<Vec<(usize, &'a mut T)>> = pool.install(|| {
+                items
+                    .par_chunks_mut(2048)
+                    .map(|chunk| {
+                        chunk
+                            .iter_mut()
+                            .filter_map(|x| slot(x).map(|s| (s, x)))
+                            .collect()
+                    })
+                    .collect()
+            });
+            for (s, x) in found.into_iter().flatten() {
+                slots[s] = Some(x);
+            }
+            return slots
+                .into_iter()
+                .map(|x| x.expect("every slot taken"))
+                .collect();
+        }
+    }
+    let _ = pool;
+    for x in items.iter_mut() {
+        if let Some(s) = slot(x) {
+            slots[s] = Some(x);
+        }
+    }
+    slots
+        .into_iter()
+        .map(|x| x.expect("every slot taken"))
+        .collect()
+}
+
+/// `items.sort_unstable()`, across the pool for large inputs. Sorting plain keys gives the
+/// same order either way.
+pub(crate) fn sort_unstable<T: Ord + Send>(pool: Option<&ThreadPool>, items: &mut [T]) {
+    #[cfg(feature = "parallel")]
+    if let Some(pool) = pool {
+        if items.len() > 16384 {
+            use rayon::prelude::*;
+            pool.install(|| items.par_sort_unstable());
+            return;
+        }
+    }
+    let _ = pool;
+    items.sort_unstable();
+}
+
+/// `f(a_i, b_i)` for `a` zipped with `b`, across the pool in blocks.
+pub(crate) fn zip_each<A: Send, B: Sync>(
+    pool: Option<&ThreadPool>,
+    a: &mut [A],
+    b: &[B],
+    f: impl Fn(&mut A, &B) + Sync,
+) {
+    debug_assert!(a.len() == b.len());
+    #[cfg(feature = "parallel")]
+    if let Some(pool) = pool {
+        if a.len() > 1024 {
+            use rayon::prelude::*;
+            pool.install(|| {
+                a.par_iter_mut()
+                    .zip(b.par_iter())
+                    .with_min_len(512)
+                    .for_each(|(x, y)| f(x, y))
+            });
+            return;
+        }
+    }
+    let _ = pool;
+    for (x, y) in a.iter_mut().zip(b) {
+        f(x, y);
+    }
+}
+
+/// Run `f` on the pool (so parallel work inside it forks from a worker), or inline.
+pub(crate) fn install<R: Send>(pool: Option<&ThreadPool>, f: impl FnOnce() -> R + Send) -> R {
+    #[cfg(feature = "parallel")]
+    if let Some(pool) = pool {
+        return pool.install(f);
+    }
+    let _ = pool;
+    f()
+}

@@ -456,13 +456,13 @@ pub(crate) fn compute_mesh_manifolds(
         cluster.point_count = reduced;
     }
 
-    let old_manifolds = nc.contact.manifolds.clone();
+    let old_manifolds = nc.contact.manifolds.to_vec();
     let old_manifold_count = old_manifolds.len() as i32;
 
     {
         let contact = &mut *nc.contact;
         if old_manifold_count != cluster_count as i32 {
-            contact.manifolds = vec![Manifold::default(); cluster_count];
+            contact.manifolds = vec![Manifold::default(); cluster_count].into();
         } else {
             for m in &mut contact.manifolds {
                 *m = Manifold::default();

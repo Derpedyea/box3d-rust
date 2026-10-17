@@ -212,6 +212,8 @@ pub(super) struct ContinuousResult {
     fraction: f32,
     /// The swept end AABB of each shape, written before the time of impact is known.
     end_aabbs: Vec<(i32, Aabb)>,
+    /// With a time of impact, each shape's fat AABB at the impact pose, in shape list order.
+    toi_aabbs: Vec<Aabb>,
     sensor_hits: Vec<SensorHit>,
     distance_iterations: i32,
     push_back_iterations: i32,
@@ -310,6 +312,25 @@ pub(super) fn continuous_compute(world: &World, body_sim_index: i32) -> Continuo
         shape_id = next_shape_id;
     }
 
+    // The shape AABBs at the impact pose, computed here so the serial apply only writes.
+    let mut toi_aabbs = Vec::new();
+    if ctx.fraction < 1.0 {
+        let q = nlerp(sweep.q1, sweep.q2, ctx.fraction);
+        let c = lerp(sweep.c1, sweep.c2, ctx.fraction);
+        let origin = sub(c, rotate_vector(q, sweep.local_center));
+        let transform = WorldTransform {
+            p: offset_pos(base, origin),
+            q,
+        };
+        let speculative = crate::constants::speculative_distance();
+        let mut shape_id = world.bodies[fast_body_id as usize].head_shape_id;
+        while shape_id != NULL_INDEX {
+            let shape = &world.shapes[shape_id as usize];
+            toi_aabbs.push(compute_fat_shape_aabb(shape, transform, speculative));
+            shape_id = shape.next_shape_id;
+        }
+    }
+
     let sensor_hits = (0..ctx.sensor_count as usize)
         .filter(|&i| ctx.sensor_fractions[i] < ctx.fraction)
         .map(|i| ctx.sensor_hits[i])
@@ -322,6 +343,7 @@ pub(super) fn continuous_compute(world: &World, body_sim_index: i32) -> Continuo
         base,
         fraction: ctx.fraction,
         end_aabbs,
+        toi_aabbs,
         sensor_hits,
         distance_iterations: ctx.distance_iterations,
         push_back_iterations: ctx.push_back_iterations,
@@ -331,7 +353,6 @@ pub(super) fn continuous_compute(world: &World, body_sim_index: i32) -> Continuo
 
 /// The writes of b3SolveContinuous, in body order.
 pub(super) fn continuous_apply(world: &mut World, result: ContinuousResult, dt: f32) {
-    let speculative = crate::constants::speculative_distance();
     let ContinuousResult {
         sim_index,
         is_bullet,
@@ -398,10 +419,10 @@ pub(super) fn continuous_apply(world: &mut World, result: ContinuousResult, dt: 
         // Prepare AABBs for broad-phase.
         // Even though a body is fast, it may not move much. So the AABB may not need enlargement.
         let mut shape_id = world.bodies[fast_body_id as usize].head_shape_id;
+        let mut toi_aabbs = result.toi_aabbs.iter();
         while shape_id != NULL_INDEX {
-            // Must recompute aabb at the interpolated transform
-            let aabb =
-                compute_fat_shape_aabb(&world.shapes[shape_id as usize], transform, speculative);
+            // The aabb at the interpolated transform, from continuous_compute
+            let aabb = *toi_aabbs.next().expect("one aabb per shape");
             world.shapes[shape_id as usize].aabb = aabb;
 
             if !aabb_contains(world.fat_aabbs[shape_id as usize], aabb) {
