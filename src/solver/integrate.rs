@@ -4,7 +4,7 @@
 //! SPDX-FileCopyrightText: 2025 Erin Catto
 //! SPDX-License-Identifier: MIT
 
-use super::continuous::{continuous_apply, continuous_compute};
+use super::continuous::{continuous_compute, ContinuousResult};
 use super::states::SolverStates;
 use super::StepContext;
 use crate::body::body_flags;
@@ -361,12 +361,15 @@ fn finalize_body_tail(
     // The shape AABBs update in [`update_shape_aabbs`].
 }
 
-/// Update the AABBs of the shapes of awake bodies that aren't fast, in parallel over the
-/// shapes, and return the proxies that left their fat AABB.
-/// For fast non-bullet bodies the AABB has already been updated in b3SolveContinuous
-/// For fast bullet bodies the AABB will be updated at a later stage
-/// (the shape loop of b3FinalizeBodiesTask)
-fn update_shape_aabbs(world: &mut World) -> Vec<(i32, Aabb)> {
+/// Update the AABBs of the shapes of awake bodies, in parallel over the shapes, and return the
+/// proxies that left their fat AABB. Fast non-bullet bodies' shapes take their continuous
+/// results (`fast_result` indexes `results` by sim, b3SolveContinuous); fast bullet bodies'
+/// shapes update at a later stage. (the shape loop of b3FinalizeBodiesTask)
+fn update_shape_aabbs(
+    world: &mut World,
+    fast_result: &[u32],
+    results: &[ContinuousResult],
+) -> Vec<(i32, Aabb)> {
     let speculative = speculative_distance();
     let World {
         shapes,
@@ -396,10 +399,14 @@ fn update_shape_aabbs(world: &mut World) -> Vec<(i32, Aabb)> {
                     continue;
                 }
                 let sim = &sims[body.local_index as usize];
-                if (sim.flags & body_flags::IS_FAST) != 0 {
-                    continue;
-                }
-                let aabb = crate::shape::compute_fat_shape_aabb(shape, sim.transform, speculative);
+                let aabb = if (sim.flags & body_flags::IS_FAST) != 0 {
+                    match fast_result[body.local_index as usize] {
+                        u32::MAX => continue,
+                        k => results[k as usize].shape_aabb(shape.id),
+                    }
+                } else {
+                    crate::shape::compute_fat_shape_aabb(shape, sim.transform, speculative)
+                };
                 shape.aabb = aabb;
                 if !aabb_contains(**fat_aabb, aabb) {
                     **fat_aabb = aabb_inflate(aabb, shape.aabb_margin);
@@ -498,29 +505,62 @@ pub(super) fn finalize_bodies(
     let results = crate::parallel::map_items(pool.as_deref(), &out.fast, |&sim_index| {
         continuous_compute(world_ref, sim_index)
     });
-    for (result, &sim_index) in results.into_iter().zip(&out.fast) {
-        continuous_apply(world, result, time_step);
-
+    // The rest of finalization for the fast bodies, with their continuous results.
+    let mut fast_result = vec![u32::MAX; awake_body_count];
+    for (k, &sim_index) in out.fast.iter().enumerate() {
+        fast_result[sim_index as usize] = k as u32;
+    }
+    if !results.is_empty() {
+        let World {
+            bodies,
+            islands,
+            solver_sets,
+            body_move_events,
+            gravity,
+            ..
+        } = &mut *world;
         let shared = FinalizeShared {
-            islands: &world.islands,
-            enable_sleep: world.enable_sleep,
-            enable_continuous: world.enable_continuous,
+            islands,
+            enable_sleep,
+            enable_continuous,
             time_step,
             inv_time_step: context.inv_dt,
-            world_id: world.world_id,
+            world_id,
         };
-        let mut tail = FinalizeOut::default();
-        let mut sim = world.solver_sets[AWAKE_SET as usize].body_sims[sim_index as usize];
-        let body = &world.bodies[sim.body_id as usize];
-        finalize_body_tail(&mut sim, body, &shared, &mut tail);
-        world.solver_sets[AWAKE_SET as usize].body_sims[sim_index as usize] = sim;
-        awake_islands.append(&mut tail.awake_islands);
+        let set = &mut solver_sets[AWAKE_SET as usize];
+        let (bodies, gravity, fast_result, results) = (&*bodies, *gravity, &fast_result, &results);
+        let tail = crate::parallel::map_reduce_zip3(
+            pool.as_deref(),
+            (
+                &mut set.body_sims[..],
+                &mut set.body_states[..awake_body_count],
+                &mut body_move_events[..awake_body_count],
+            ),
+            256,
+            |first, sims, states, events| {
+                let mut out = FinalizeOut::default();
+                let items = sims.iter_mut().zip(states).zip(events);
+                for (i, ((sim, state), event)) in items.enumerate() {
+                    let k = fast_result[first + i];
+                    if k != u32::MAX {
+                        results[k as usize].apply_to_body(sim, state, event, gravity, time_step);
+                        finalize_body_tail(sim, &bodies[sim.body_id as usize], &shared, &mut out);
+                    }
+                }
+                out
+            },
+            FinalizeOut::merge,
+        );
+        awake_islands.extend(tail.awake_islands);
         split = max_split(split, tail.split);
+        for result in results {
+            result.record(&mut world.task_contexts[0]);
+        }
     }
     bullet_bodies.extend_from_slice(&out.bullets);
 
     // Move the proxies of enlarged shapes. (C marks them with atomics.)
-    for (proxy_key, fat_aabb) in update_shape_aabbs(world) {
+    for (proxy_key, fat_aabb) in update_shape_aabbs(world, &fast_result, &results) {
         world.broad_phase.mark_proxy_moved(proxy_key, fat_aabb);
     }
 

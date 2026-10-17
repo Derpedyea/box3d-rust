@@ -11,7 +11,8 @@ use crate::geometry::ShapeType;
 use crate::id::ShapeId;
 use crate::math_functions::{
     aabb_contains, aabb_inflate, aabb_union, add, lerp, max_int, mul_sv, nlerp, offset_aabb,
-    offset_pos, rotate_vector, sub, sub_pos, transform_point, Aabb, Pos, Transform, WorldTransform,
+    offset_pos, rotate_vector, sub, sub_pos, transform_point, Aabb, Pos, Transform, Vec3,
+    WorldTransform,
 };
 use crate::sensor::SensorHit;
 use crate::shape::{
@@ -218,6 +219,83 @@ pub(super) struct ContinuousResult {
     distance_iterations: i32,
     push_back_iterations: i32,
     root_iterations: i32,
+}
+
+impl ContinuousResult {
+    /// Shape `shape_id` of the fast body's AABB after continuous collision: at the impact
+    /// pose if there is one, else at the end of the sweep.
+    pub(super) fn shape_aabb(&self, shape_id: i32) -> Aabb {
+        let k = self
+            .end_aabbs
+            .iter()
+            .position(|&(id, _)| id == shape_id)
+            .expect("a shape of the fast body");
+        if self.fraction < 1.0 {
+            self.toi_aabbs[k]
+        } else {
+            self.end_aabbs[k].1
+        }
+    }
+
+    /// The body writes of [`continuous_apply`] for a fast non-bullet body. Its shapes take
+    /// [`Self::shape_aabb`].
+    pub(super) fn apply_to_body(
+        &self,
+        sim: &mut BodySim,
+        state: &mut crate::body::BodyState,
+        move_event: &mut crate::events::BodyMoveEvent,
+        gravity: Vec3,
+        dt: f32,
+    ) {
+        debug_assert!(!self.is_bullet);
+        let sweep = &self.sweep;
+        if self.fraction < 1.0 {
+            let q = nlerp(sweep.q1, sweep.q2, self.fraction);
+            let c = lerp(sweep.c1, sweep.c2, self.fraction);
+            let origin = sub(c, rotate_vector(q, sweep.local_center));
+            let transform = WorldTransform {
+                p: offset_pos(self.base, origin),
+                q,
+            };
+            let center = offset_pos(self.base, c);
+            sim.transform = transform;
+            sim.center = center;
+            sim.rotation0 = q;
+            sim.center0 = center;
+            sim.flags |= body_flags::HAD_TIME_OF_IMPACT;
+
+            // Timeloss means there is a lost gravity contribution. Other forces and torques
+            // are ignored for now.
+            let time_loss = (1.0 - self.fraction) * dt;
+            let mut dv = mul_sv(-time_loss * sim.gravity_scale, gravity);
+            let flags = state.flags;
+            if (flags & body_flags::LOCK_LINEAR_X) != 0 {
+                dv.x = 0.0;
+            }
+            if (flags & body_flags::LOCK_LINEAR_Y) != 0 {
+                dv.y = 0.0;
+            }
+            if (flags & body_flags::LOCK_LINEAR_Z) != 0 {
+                dv.z = 0.0;
+            }
+            state.linear_velocity = add(state.linear_velocity, dv);
+
+            // The move event was written before CCD, so correct it with the impact pose
+            move_event.transform = transform;
+        } else {
+            // No time of impact event. Advance body
+            sim.rotation0 = sim.transform.q;
+            sim.center0 = sim.center;
+        }
+    }
+
+    /// The task context bookkeeping of [`continuous_apply`].
+    pub(super) fn record(&self, task: &mut crate::world::TaskContext) {
+        task.sensor_hits.extend_from_slice(&self.sensor_hits);
+        task.distance_iterations = max_int(task.distance_iterations, self.distance_iterations);
+        task.push_back_iterations = max_int(task.push_back_iterations, self.push_back_iterations);
+        task.root_iterations = max_int(task.root_iterations, self.root_iterations);
+    }
 }
 
 /// The read-only part of b3SolveContinuous: sweep the body's shapes against the trees. Fast

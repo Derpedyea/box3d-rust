@@ -173,6 +173,41 @@ pub(crate) fn map_reduce_blocks<T: Send, R: Send + Default>(
     items.chunks_mut(block).map(f).fold(R::default(), merge)
 }
 
+/// `f(first index, a block, b block, c block)` over `a`, `b`, and `c` (same length) in blocks
+/// of `block`, across the pool, folding the results in block order with `merge`.
+#[allow(clippy::type_complexity)]
+pub(crate) fn map_reduce_zip3<A: Send, B: Send, C: Send, R: Send + Default>(
+    pool: Option<&ThreadPool>,
+    (a, b, c): (&mut [A], &mut [B], &mut [C]),
+    block: usize,
+    f: impl Fn(usize, &mut [A], &mut [B], &mut [C]) -> R + Sync,
+    merge: impl Fn(R, R) -> R + Sync,
+) -> R {
+    assert!(a.len() == b.len() && a.len() == c.len());
+    #[cfg(feature = "parallel")]
+    if let Some(pool) = pool {
+        if a.len() > 2 * block {
+            use rayon::prelude::*;
+            let results: Vec<R> = pool.install(|| {
+                a.par_chunks_mut(block)
+                    .zip(b.par_chunks_mut(block))
+                    .zip(c.par_chunks_mut(block))
+                    .enumerate()
+                    .map(|(i, ((a, b), c))| f(i * block, a, b, c))
+                    .collect()
+            });
+            return results.into_iter().fold(R::default(), merge);
+        }
+    }
+    let _ = pool;
+    a.chunks_mut(block)
+        .zip(b.chunks_mut(block))
+        .zip(c.chunks_mut(block))
+        .enumerate()
+        .map(|(i, ((a, b), c))| f(i * block, a, b, c))
+        .fold(R::default(), merge)
+}
+
 /// `items.iter().map(f).collect()`, in parallel across the pool, keeping the order.
 pub(crate) fn map_items<T: Sync, U: Send>(
     pool: Option<&ThreadPool>,
