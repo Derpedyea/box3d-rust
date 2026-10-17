@@ -47,7 +47,7 @@ use crate::math_functions::{abs_float, mul_sv, sub, Matrix3, Vec3, VEC3_ZERO};
 /// (joint.h: b3SolvePointConstraint)
 ///
 /// K = [(1/m1 + 1/m2) * eye(2) - skew(r1) * invI1 * skew(r1) - skew(r2) * invI2 * skew(r2)]
-#[inline]
+#[inline(always)]
 pub(crate) fn solve_point_constraint(
     m_a: f32,
     m_b: f32,
