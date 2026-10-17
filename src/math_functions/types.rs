@@ -10,6 +10,7 @@ pub struct Vec2 {
 
 /// A 3D vector.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[repr(C)]
 pub struct Vec3 {
     pub x: f32,
     pub y: f32,
@@ -27,6 +28,7 @@ pub struct CosSin {
 
 /// A quaternion.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
 pub struct Quat {
     pub v: Vec3,
     pub s: f32,

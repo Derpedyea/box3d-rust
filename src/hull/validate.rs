@@ -6,7 +6,7 @@ use super::types::{
 };
 use crate::core::NULL_INDEX;
 use crate::math_functions::{dot, plane_separation, Vec3};
-use crate::simd_scalar::{add_w, blend_w, greater_than_w, load_w, mul_w, set_w, splat_w, store_w};
+use crate::simd::{add_w, blend_w, greater_than_w, load_w, mul_w, set_w, splat_w, store_w};
 
 /// Find the support vertex in a direction. (b3FindHullSupportVertex)
 ///

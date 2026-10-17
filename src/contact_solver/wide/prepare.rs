@@ -7,16 +7,17 @@ use super::{
     add_sym_w, gather_bodies, invert_sym_w, lane, mul_mvw, perp_w, ContactConstraintPointWide,
     ContactConstraintWide, SymMatrix2W, SymMatrix3W, Vec2W, EMPTY_LANE, SYM3W_ZERO,
 };
-use crate::body::{decode_awake_index, BodySim, BodyState};
+use crate::body::{decode_awake_index, BodySim};
 use crate::constants::{speculative_distance, MAX_MANIFOLD_POINTS, MIN_FRICTION_WEIGHT};
 use crate::contact::{contact_flags, Contact};
 use crate::core::SIMD_WIDTH;
 use crate::manifold::{Manifold, ManifoldPoint};
-use crate::simd_scalar::{
+use crate::simd::{
     abs_w, add_vw, add_w, all_zero_w, and_w, any_true_w, blend_w, cross_w, div_w, dot_w,
     greater_than_w, max_w, min_w, mul_add_svw, mul_svw, mul_w, neg_w, set_w, splat_w, sqrt_w,
     sub_vw, sub_w, zero_w, Vec3W,
 };
+use crate::solver::states::SolverStates;
 
 macro_rules! gather_lanes {
     ($lanes:expr, |$l:ident| $field:expr) => {{
@@ -70,16 +71,37 @@ fn gather_inv_inertia_w(sims: &[&BodySim; SIMD_WIDTH]) -> SymMatrix3W {
 /// Prepare the wide constraints for the convex contacts of one graph color. Returns true if
 /// any lane has restitution. (b3PrepareContacts_Convex, one color)
 ///
-/// `contact_ids` is the color's convex contact array. Writes the sampled normal velocity onto
-/// the manifold points of lanes that enable hit events, like C.
+/// `lanes` holds the color's convex contacts in its convex contact array order, four per
+/// wide constraint. Writes the sampled normal velocity onto the manifold points of lanes that
+/// enable hit events, like C. Wide constraints are independent, so they prepare in parallel.
 pub fn prepare_contacts_convex(
     constraints: &mut Vec<ContactConstraintWide>,
-    contact_ids: &[i32],
-    contacts: &mut [Contact],
+    lanes: &mut [&mut Contact],
     sims: &[BodySim],
-    states: &[BodyState],
+    states: &SolverStates,
     enable_warm_starting: bool,
+    pool: Option<&crate::parallel::ThreadPool>,
 ) -> bool {
+    let any_restitution = std::sync::atomic::AtomicBool::new(false);
+    crate::parallel::map_chunks_into(pool, lanes, SIMD_WIDTH, constraints, |chunk| {
+        let (constraint, restitution) =
+            prepare_one_convex(chunk, sims, states, enable_warm_starting);
+        if restitution {
+            any_restitution.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        constraint
+    });
+    any_restitution.into_inner()
+}
+
+/// One wide constraint from up to four contacts. Returns it and whether a lane has
+/// restitution.
+fn prepare_one_convex(
+    chunk: &mut [&mut Contact],
+    sims: &[BodySim],
+    states: &SolverStates,
+    enable_warm_starting: bool,
+) -> (ContactConstraintWide, bool) {
     let zero_sim = BodySim {
         inv_mass: 0.0,
         inv_inertia_world: crate::math_functions::MAT3_ZERO,
@@ -96,17 +118,7 @@ pub fn prepare_contacts_convex(
     let min_det = splat_w(1000.0 * f32::MIN_POSITIVE);
     let mut any_restitution = false;
 
-    let color_contact_count = contact_ids.len();
-    let wide_count = if color_contact_count == 0 {
-        0
-    } else {
-        ((color_contact_count - 1) >> 2) + 1
-    };
-
-    constraints.clear();
-    constraints.reserve(wide_count);
-
-    for local_wide_index in 0..wide_count {
+    {
         let mut index_a = [0i32; SIMD_WIDTH];
         let mut index_b = [0i32; SIMD_WIDTH];
         let mut point_counts = [0i32; SIMD_WIDTH];
@@ -117,10 +129,9 @@ pub fn prepare_contacts_convex(
         let mut sim_index_b = [crate::core::NULL_INDEX; SIMD_WIDTH];
 
         for lane_index in 0..SIMD_WIDTH {
-            let contact_index = SIMD_WIDTH * local_wide_index + lane_index;
-            if contact_index < color_contact_count {
-                let contact_id = contact_ids[contact_index];
-                let contact = &contacts[contact_id as usize];
+            if lane_index < chunk.len() {
+                let contact = &*chunk[lane_index];
+                let contact_id = contact.contact_id;
                 debug_assert!(contact.manifold_count() == 1);
 
                 let a = decode_awake_index(contact.encoded_body_sim_a);
@@ -156,7 +167,7 @@ pub fn prepare_contacts_convex(
             if lane_ids[i] == EMPTY_LANE {
                 None
             } else {
-                Some(&contacts[lane_ids[i] as usize])
+                Some(&*chunk[i])
             }
         });
         let manifold_lanes: [&Manifold; SIMD_WIDTH] =
@@ -443,15 +454,14 @@ pub fn prepare_contacts_convex(
                         if (hit_event_lanes & (1 << l)) != 0
                             && (point_index as i32) < point_counts[l]
                         {
-                            contacts[lane_ids[l] as usize].manifolds[0].points[point_index]
-                                .normal_velocity = lane(vn, l);
+                            chunk[l].manifolds[0].points[point_index].normal_velocity = lane(vn, l);
                         }
                     }
                 }
             }
         }
 
-        constraints.push(ContactConstraintWide {
+        let constraint = ContactConstraintWide {
             index_a,
             index_b,
             point_counts,
@@ -477,8 +487,7 @@ pub fn prepare_contacts_convex(
             restitution,
             contact_ids: lane_ids,
             points,
-        });
+        };
+        (constraint, any_restitution)
     }
-
-    any_restitution
 }

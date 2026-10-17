@@ -10,7 +10,7 @@
 // SPDX-License-Identifier: MIT
 
 use super::{get_joint_sim_check_type, get_joint_sim_check_type_ref, JointSim, JointType};
-use crate::body::{body_flags, BodyState, IDENTITY_BODY_STATE};
+use crate::body::{body_flags, IDENTITY_BODY_STATE};
 use crate::core::NULL_INDEX;
 use crate::id::JointId;
 use crate::math_functions::{
@@ -18,6 +18,7 @@ use crate::math_functions::{
     mul_quat, mul_sv, negate_quat, rotate_vector, solve2, sub, sub2, Mat2, Vec2, Vec3, VEC3_AXIS_X,
     VEC3_AXIS_Y,
 };
+use crate::solver::states::SolverStates;
 use crate::solver::{make_soft, StepContext};
 use crate::solver_set::AWAKE_SET;
 use crate::world::World;
@@ -189,7 +190,7 @@ pub fn prepare_parallel_joint(world: &World, base: &mut JointSim, context: &Step
 }
 
 /// (b3WarmStartParallelJoint)
-pub fn warm_start_parallel_joint(base: &mut JointSim, states: &mut [BodyState]) {
+pub fn warm_start_parallel_joint(base: &mut JointSim, states: &SolverStates) {
     debug_assert!(base.type_ == JointType::Parallel);
 
     let i_a = base.inv_i_a;
@@ -200,12 +201,12 @@ pub fn warm_start_parallel_joint(base: &mut JointSim, states: &mut [BodyState]) 
     let mut state_a = if joint.index_a == NULL_INDEX {
         IDENTITY_BODY_STATE
     } else {
-        states[joint.index_a as usize]
+        states.get(joint.index_a as usize)
     };
     let mut state_b = if joint.index_b == NULL_INDEX {
         IDENTITY_BODY_STATE
     } else {
-        states[joint.index_b as usize]
+        states.get(joint.index_b as usize)
     };
 
     let mut w_a = state_a.angular_velocity;
@@ -223,17 +224,17 @@ pub fn warm_start_parallel_joint(base: &mut JointSim, states: &mut [BodyState]) 
 
     if state_a.flags & body_flags::DYNAMIC_FLAG != 0 {
         state_a.angular_velocity = w_a;
-        states[joint.index_a as usize] = state_a;
+        states.set(joint.index_a as usize, state_a);
     }
 
     if state_b.flags & body_flags::DYNAMIC_FLAG != 0 {
         state_b.angular_velocity = w_b;
-        states[joint.index_b as usize] = state_b;
+        states.set(joint.index_b as usize, state_b);
     }
 }
 
 /// (b3SolveParallelJoint)
-pub fn solve_parallel_joint(base: &mut JointSim, context: &StepContext, states: &mut [BodyState]) {
+pub fn solve_parallel_joint(base: &mut JointSim, context: &StepContext, states: &SolverStates) {
     let i_a = base.inv_i_a;
     let i_b = base.inv_i_b;
     let fixed_rotation = base.fixed_rotation;
@@ -243,12 +244,12 @@ pub fn solve_parallel_joint(base: &mut JointSim, context: &StepContext, states: 
     let mut state_a = if joint.index_a == NULL_INDEX {
         IDENTITY_BODY_STATE
     } else {
-        states[joint.index_a as usize]
+        states.get(joint.index_a as usize)
     };
     let mut state_b = if joint.index_b == NULL_INDEX {
         IDENTITY_BODY_STATE
     } else {
-        states[joint.index_b as usize]
+        states.get(joint.index_b as usize)
     };
 
     let mut w_a = state_a.angular_velocity;
@@ -342,11 +343,11 @@ pub fn solve_parallel_joint(base: &mut JointSim, context: &StepContext, states: 
 
     if state_a.flags & body_flags::DYNAMIC_FLAG != 0 {
         state_a.angular_velocity = w_a;
-        states[joint.index_a as usize] = state_a;
+        states.set(joint.index_a as usize, state_a);
     }
 
     if state_b.flags & body_flags::DYNAMIC_FLAG != 0 {
         state_b.angular_velocity = w_b;
-        states[joint.index_b as usize] = state_b;
+        states.set(joint.index_b as usize, state_b);
     }
 }

@@ -8,16 +8,16 @@ use super::{
     add_v2w, gather_bodies, inv_rotate_vector_w, mul_add_mvw, mul_mv2w, mul_mvw, mul_sub_mvw,
     scatter_bodies, ContactConstraintWide, Vec2W,
 };
-use crate::body::BodyState;
-use crate::simd_scalar::{
+use crate::simd::{
     add_vw, add_w, all_zero_w, blend_w, cross_w, div_w, dot_w, greater_than_w, max_w, mul_add_svw,
     mul_add_w, mul_sub_svw, mul_svw, mul_w, neg_w, soft_mask_w, splat_w, sqrt_w, sub_vw, sub_w,
     sym_clamp_w, zero_w, Vec3W,
 };
+use crate::solver::states::SolverStates;
 use crate::solver::StepContext;
 
 /// (b3WarmStartContacts_Convex)
-pub fn warm_start_contacts_convex(constraints: &[ContactConstraintWide], states: &mut [BodyState]) {
+pub fn warm_start_contacts_convex(constraints: &[ContactConstraintWide], states: &SolverStates) {
     for c in constraints {
         let mut b_a = gather_bodies(states, &c.index_a);
         let mut b_b = gather_bodies(states, &c.index_b);
@@ -81,7 +81,7 @@ pub fn warm_start_contacts_convex(constraints: &[ContactConstraintWide], states:
 /// (b3PushContacts_Convex)
 pub fn push_contacts_convex(
     constraints: &mut [ContactConstraintWide],
-    states: &mut [BodyState],
+    states: &SolverStates,
     context: &StepContext,
 ) {
     let inv_h = splat_w(context.inv_h);
@@ -178,7 +178,7 @@ pub fn push_contacts_convex(
 /// Solve the normal constraint, friction, and rolling resistance. (b3SolveContacts_Convex)
 pub fn solve_contacts_convex(
     constraints: &mut [ContactConstraintWide],
-    states: &mut [BodyState],
+    states: &SolverStates,
     context: &StepContext,
 ) {
     let inv_h = splat_w(context.inv_h);

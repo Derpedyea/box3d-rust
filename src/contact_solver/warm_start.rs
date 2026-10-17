@@ -4,23 +4,24 @@
 //! SPDX-License-Identifier: MIT
 
 use super::ContactConstraint;
-use crate::body::{body_flags, BodyState, IDENTITY_BODY_STATE};
+use crate::body::{body_flags, IDENTITY_BODY_STATE};
 use crate::core::NULL_INDEX;
 use crate::math_functions::{add, cross, mul_add, mul_mv, mul_sub, mul_sv, sub};
+use crate::solver::states::SolverStates;
 
-fn warm_start_one(contact_constraint: &ContactConstraint, states: &mut [BodyState]) {
+fn warm_start_one(contact_constraint: &ContactConstraint, states: &SolverStates) {
     let index_a = contact_constraint.index_a;
     let index_b = contact_constraint.index_b;
 
     let mut state_a = if index_a == NULL_INDEX {
         IDENTITY_BODY_STATE
     } else {
-        states[index_a as usize]
+        states.get(index_a as usize)
     };
     let mut state_b = if index_b == NULL_INDEX {
         IDENTITY_BODY_STATE
     } else {
-        states[index_b as usize]
+        states.get(index_b as usize)
     };
 
     let mut v_a = state_a.linear_velocity;
@@ -86,18 +87,18 @@ fn warm_start_one(contact_constraint: &ContactConstraint, states: &mut [BodyStat
     if (state_a.flags & body_flags::DYNAMIC_FLAG) != 0 {
         state_a.linear_velocity = v_a;
         state_a.angular_velocity = w_a;
-        states[index_a as usize] = state_a;
+        states.set(index_a as usize, state_a);
     }
 
     if (state_b.flags & body_flags::DYNAMIC_FLAG) != 0 {
         state_b.linear_velocity = v_b;
         state_b.angular_velocity = w_b;
-        states[index_b as usize] = state_b;
+        states.set(index_b as usize, state_b);
     }
 }
 
 /// (b3WarmStartContacts_Mesh)
-pub fn warm_start_contacts(constraints: &mut [ContactConstraint], states: &mut [BodyState]) {
+pub fn warm_start_contacts(constraints: &mut [ContactConstraint], states: &SolverStates) {
     for contact_constraint in constraints.iter() {
         warm_start_one(contact_constraint, states);
     }

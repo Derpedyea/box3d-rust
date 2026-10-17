@@ -52,7 +52,7 @@ pub(super) fn make_relative_sweep(body_sim: &BodySim, base: Pos) -> Sweep {
 }
 
 /// Process one broad-phase leaf against the fast shape. (b3ContinuousQueryCallback)
-fn continuous_query_callback(world: &mut World, ctx: &mut ContinuousContext, shape_id: i32) {
+fn continuous_query_callback(world: &World, ctx: &mut ContinuousContext, shape_id: i32) {
     let fast_shape_id = ctx.fast_shape_id;
     debug_assert!(world.shapes[fast_shape_id as usize].sensor_index == NULL_INDEX);
 
@@ -199,7 +199,29 @@ fn query_tree_shape_ids(world: &World, tree_type: BodyType, swept_box: Aabb) -> 
 
 /// Continuous collision of a fast dynamic body. (b3SolveContinuous)
 pub(super) fn solve_continuous(world: &mut World, body_sim_index: i32, dt: f32) {
-    let speculative = crate::constants::speculative_distance();
+    let result = continuous_compute(world, body_sim_index);
+    continuous_apply(world, result, dt);
+}
+
+/// What [`continuous_compute`] finds for one fast body.
+pub(super) struct ContinuousResult {
+    sim_index: usize,
+    is_bullet: bool,
+    sweep: Sweep,
+    base: Pos,
+    fraction: f32,
+    /// The swept end AABB of each shape, written before the time of impact is known.
+    end_aabbs: Vec<(i32, Aabb)>,
+    sensor_hits: Vec<SensorHit>,
+    distance_iterations: i32,
+    push_back_iterations: i32,
+    root_iterations: i32,
+}
+
+/// The read-only part of b3SolveContinuous: sweep the body's shapes against the trees. Fast
+/// non-bullet bodies only meet static shapes, which finalization doesn't move, so these can
+/// run in parallel.
+pub(super) fn continuous_compute(world: &World, body_sim_index: i32) -> ContinuousResult {
     let sim_index = body_sim_index as usize;
 
     {
@@ -241,6 +263,7 @@ pub(super) fn solve_continuous(world: &mut World, body_sim_index: i32, dt: f32) 
         root_iterations: 0,
     };
 
+    let mut end_aabbs = Vec::new();
     let mut shape_id = world.bodies[fast_body_id as usize].head_shape_id;
     while shape_id != NULL_INDEX {
         let next_shape_id = world.shapes[shape_id as usize].next_shape_id;
@@ -253,7 +276,7 @@ pub(super) fn solve_continuous(world: &mut World, body_sim_index: i32, dt: f32) 
             compute_shape_aabb(&world.shapes[shape_id as usize], xf2),
             base,
         );
-        world.shapes[shape_id as usize].aabb = box2;
+        end_aabbs.push((shape_id, box2));
 
         let shape_type = world.shapes[shape_id as usize].shape_type();
         if shape_type == ShapeType::Mesh || shape_type == ShapeType::Height {
@@ -287,6 +310,41 @@ pub(super) fn solve_continuous(world: &mut World, body_sim_index: i32, dt: f32) 
         shape_id = next_shape_id;
     }
 
+    let sensor_hits = (0..ctx.sensor_count as usize)
+        .filter(|&i| ctx.sensor_fractions[i] < ctx.fraction)
+        .map(|i| ctx.sensor_hits[i])
+        .collect();
+
+    ContinuousResult {
+        sim_index,
+        is_bullet,
+        sweep,
+        base,
+        fraction: ctx.fraction,
+        end_aabbs,
+        sensor_hits,
+        distance_iterations: ctx.distance_iterations,
+        push_back_iterations: ctx.push_back_iterations,
+        root_iterations: ctx.root_iterations,
+    }
+}
+
+/// The writes of b3SolveContinuous, in body order.
+pub(super) fn continuous_apply(world: &mut World, result: ContinuousResult, dt: f32) {
+    let speculative = crate::constants::speculative_distance();
+    let ContinuousResult {
+        sim_index,
+        is_bullet,
+        sweep,
+        base,
+        ..
+    } = result;
+    let fast_body_id = world.solver_sets[AWAKE_SET as usize].body_sims[sim_index].body_id;
+    for &(shape_id, aabb) in &result.end_aabbs {
+        world.shapes[shape_id as usize].aabb = aabb;
+    }
+
+    let ctx = &result;
     if ctx.fraction < 1.0 {
         let q = nlerp(sweep.q1, sweep.q2, ctx.fraction);
         let c = lerp(sweep.c1, sweep.c2, ctx.fraction);
@@ -394,11 +452,9 @@ pub(super) fn solve_continuous(world: &mut World, body_sim_index: i32, dt: f32) 
         }
     }
 
-    for i in 0..ctx.sensor_count as usize {
-        if ctx.sensor_fractions[i] < ctx.fraction {
-            world.task_contexts[0].sensor_hits.push(ctx.sensor_hits[i]);
-        }
-    }
+    world.task_contexts[0]
+        .sensor_hits
+        .extend_from_slice(&result.sensor_hits);
 
     let task = &mut world.task_contexts[0];
     task.distance_iterations = max_int(task.distance_iterations, ctx.distance_iterations);

@@ -6,7 +6,8 @@
 // SPDX-License-Identifier: MIT
 
 use super::contact_flags;
-use super::{destroy_contact, update_contact};
+use super::update::{update_contact_in, ContactParams, NarrowCtx};
+use super::{destroy_contact, Contact};
 use crate::bitset::BitSet;
 use crate::body::{body_flags, is_static_sim_index, BodySim};
 use crate::constants::{
@@ -54,17 +55,21 @@ fn add_non_touching_contact(world: &mut World, contact_id: i32) {
 /// directly; any other set (a non-touching contact against a sleeping body) goes through the
 /// body. Returns a copy because the collide task only reads the sim.
 /// (b3ResolveContactBodySim)
-fn resolve_contact_body_sim(world: &World, encoded_index: i32, body_id: i32) -> BodySim {
+fn resolve_contact_body_sim<'a>(
+    shared: &CollideShared<'a>,
+    encoded_index: i32,
+    body_id: i32,
+) -> &'a BodySim {
     if encoded_index >= 0 {
-        return world.solver_sets[AWAKE_SET as usize].body_sims[encoded_index as usize];
+        return &shared.solver_sets[AWAKE_SET as usize].body_sims[encoded_index as usize];
     }
 
     if is_static_sim_index(encoded_index) {
-        return world.solver_sets[STATIC_SET as usize].body_sims[(-encoded_index - 2) as usize];
+        return &shared.solver_sets[STATIC_SET as usize].body_sims[(-encoded_index - 2) as usize];
     }
 
-    let body = &world.bodies[body_id as usize];
-    world.solver_sets[body.set_index as usize].body_sims[body.local_index as usize]
+    let body = &shared.bodies[body_id as usize];
+    &shared.solver_sets[body.set_index as usize].body_sims[body.local_index as usize]
 }
 
 /// (b3RemoveNonTouchingContact)
@@ -83,48 +88,74 @@ fn remove_non_touching_contact(world: &mut World, set_index: i32, local_index: i
 }
 
 /// Per-contact narrow phase. (b3CollideTask — serial over full range)
-fn collide_task(world: &mut World, contact_indices: &[i32], worker_index: i32) {
-    let recycle_distance = world.contact_recycle_distance;
-    let speculative = speculative_distance();
-    let recycle_distance_non_touching = min_float(recycle_distance, speculative);
+/// What the narrow phase reads while contacts update in parallel.
+pub(crate) struct CollideShared<'a> {
+    pub shapes: &'a [crate::shape::Shape],
+    pub fat_aabbs: &'a [crate::math_functions::Aabb],
+    pub solver_sets: &'a [crate::solver_set::SolverSet],
+    pub bodies: &'a [crate::body::Body],
+    pub params: ContactParams,
+    pub recycle_distance: f32,
+    pub recycle_distance_non_touching: f32,
+}
 
-    for &contact_index in contact_indices {
-        debug_assert!((contact_index as usize) < world.contacts.len());
-        debug_assert!(world.contacts[contact_index as usize].contact_id == contact_index);
+/// What one block of contact updates produces: the b3TaskContext collide counters, the
+/// contacts whose touching state changed (C sets these in the worker's contact state bit
+/// set), and the new manifold counts of touching mesh contacts, which C writes straight into
+/// the graph color's contact spec. Blocks merge in any order to the same result.
+#[derive(Default)]
+pub(crate) struct CollideStats {
+    pub sat_call_count: i32,
+    pub sat_cache_hit_count: i32,
+    pub recycled_contact_count: i32,
+    pub manifold_counts: [i32; CONTACT_MANIFOLD_COUNT_BUCKETS],
+    pub changed_contacts: Vec<i32>,
+    /// (color index, local index, manifold count)
+    pub mesh_manifold_counts: Vec<(i32, i32, u16)>,
+}
 
-        let shape_id_a = world.contacts[contact_index as usize].shape_id_a;
-        let shape_id_b = world.contacts[contact_index as usize].shape_id_b;
+impl CollideStats {
+    pub(crate) fn add(&mut self, mut other: CollideStats) {
+        self.sat_call_count += other.sat_call_count;
+        self.sat_cache_hit_count += other.sat_cache_hit_count;
+        self.recycled_contact_count += other.recycled_contact_count;
+        for (a, b) in self.manifold_counts.iter_mut().zip(other.manifold_counts) {
+            *a += b;
+        }
+        self.changed_contacts.append(&mut other.changed_contacts);
+        self.mesh_manifold_counts
+            .append(&mut other.mesh_manifold_counts);
+    }
+}
+
+/// Update one contact. (the body of b3CollideTask's loop)
+fn collide_contact(contact: &mut Contact, shared: &CollideShared<'_>, stats: &mut CollideStats) {
+    let recycle_distance = shared.recycle_distance;
+    let recycle_distance_non_touching = shared.recycle_distance_non_touching;
+    let contact_index = contact.contact_id;
+    {
+        let shape_id_a = contact.shape_id_a;
+        let shape_id_b = contact.shape_id_b;
 
         // Do proxies still overlap?
         let overlap = overlap_v(
-            &world.fat_aabbs[shape_id_a as usize],
-            &world.fat_aabbs[shape_id_b as usize],
+            &shared.fat_aabbs[shape_id_a as usize],
+            &shared.fat_aabbs[shape_id_b as usize],
         );
         if !overlap {
-            world.contacts[contact_index as usize].flags |= contact_flags::SIM_DISJOINT;
-            world.contacts[contact_index as usize].flags &= !contact_flags::SIM_TOUCHING;
-            world.task_contexts[worker_index as usize]
-                .contact_state_bit_set
-                .set_bit(contact_index as u32);
-            continue;
+            contact.flags |= contact_flags::SIM_DISJOINT;
+            contact.flags &= !contact_flags::SIM_TOUCHING;
+            stats.changed_contacts.push(contact_index);
+            return;
         }
 
         // Update contact respecting shape/body order (A,B)
-        let encoded_a = world.contacts[contact_index as usize].encoded_body_sim_a;
-        let encoded_b = world.contacts[contact_index as usize].encoded_body_sim_b;
-        let sim_a = resolve_contact_body_sim(
-            world,
-            encoded_a,
-            world.contacts[contact_index as usize].edges[0].body_id,
-        );
-        let sim_b = resolve_contact_body_sim(
-            world,
-            encoded_b,
-            world.contacts[contact_index as usize].edges[1].body_id,
-        );
+        let encoded_a = contact.encoded_body_sim_a;
+        let encoded_b = contact.encoded_body_sim_b;
+        let sim_a = resolve_contact_body_sim(shared, encoded_a, contact.edges[0].body_id);
+        let sim_b = resolve_contact_body_sim(shared, encoded_b, contact.edges[1].body_id);
 
-        let was_touching =
-            (world.contacts[contact_index as usize].flags & contact_flags::SIM_TOUCHING) != 0;
+        let was_touching = (contact.flags & contact_flags::SIM_TOUCHING) != 0;
 
         let transform_a = sim_a.transform;
         let transform_b = sim_b.transform;
@@ -136,13 +167,12 @@ fn collide_task(world: &mut World, contact_indices: &[i32], worker_index: i32) {
             recycle_distance_non_touching
         };
 
-        let flags = world.contacts[contact_index as usize].flags;
+        let flags = contact.flags;
         if !is_fast
             && recycle_distance > 0.0
             && (flags & contact_flags::RELATIVE_TRANSFORM_VALID) != 0
             && (flags & contact_flags::RECYCLE) != 0
         {
-            let contact = &world.contacts[contact_index as usize];
             // The scalar part of b3InvMulQuat is just the quaternion dot product.
             // cos(relative_angle/2) = scalar(conj(q1) * q2) = dot(q1, q2)
             // A small relative angle means this value is close to 1. Need to use abs or square
@@ -191,15 +221,10 @@ fn collide_task(world: &mut World, contact_indices: &[i32], worker_index: i32) {
 
                     let manifold_count = contact.manifold_count();
                     for manifold_index in 0..manifold_count as usize {
-                        let normal =
-                            world.contacts[contact_index as usize].manifolds[manifold_index].normal;
-                        let point_count = world.contacts[contact_index as usize].manifolds
-                            [manifold_index]
-                            .point_count;
+                        let normal = contact.manifolds[manifold_index].normal;
+                        let point_count = contact.manifolds[manifold_index].point_count;
                         for point_index in 0..point_count as usize {
-                            let mp = &mut world.contacts[contact_index as usize].manifolds
-                                [manifold_index]
-                                .points[point_index];
+                            let mp = &mut contact.manifolds[manifold_index].points[point_index];
                             let r_a = mul_mv(matrix_a, mp.anchor_a);
                             let r_b = mul_mv(matrix_b, mp.anchor_b);
                             let dp = crate::math_functions::add(dc, sub(r_b, r_a));
@@ -209,30 +234,31 @@ fn collide_task(world: &mut World, contact_indices: &[i32], worker_index: i32) {
                         }
                     }
 
-                    world.task_contexts[worker_index as usize].recycled_contact_count += 1;
+                    stats.recycled_contact_count += 1;
                     let bucket_index =
                         min_int(manifold_count, CONTACT_MANIFOLD_COUNT_BUCKETS as i32 - 1);
                     if bucket_index > 0 {
-                        world.task_contexts[worker_index as usize].manifold_counts
-                            [(bucket_index - 1) as usize] += 1;
+                        stats.manifold_counts[(bucket_index - 1) as usize] += 1;
                     }
-                    continue;
+                    return;
                 }
             }
         }
 
         {
-            let contact = &mut world.contacts[contact_index as usize];
             contact.cached_rotation_a = transform_a.q;
             contact.cached_rotation_b = transform_b.q;
             contact.cached_relative_pose = inv_mul_world_transforms(transform_a, transform_b);
             contact.flags |= contact_flags::RELATIVE_TRANSFORM_VALID;
         }
 
-        let touching = update_contact(
-            world,
-            worker_index,
-            contact_index,
+        let touching = update_contact_in(
+            &mut NarrowCtx {
+                contact: &mut *contact,
+                stats: &mut *stats,
+                params: &shared.params,
+            },
+            shared.shapes,
             shape_id_a,
             sim_a.local_center,
             transform_a,
@@ -242,46 +268,37 @@ fn collide_task(world: &mut World, contact_indices: &[i32], worker_index: i32) {
             is_fast,
         );
 
-        let manifold_count = world.contacts[contact_index as usize].manifold_count();
+        let manifold_count = contact.manifold_count();
         let bucket_index = min_int(manifold_count, CONTACT_MANIFOLD_COUNT_BUCKETS as i32 - 1);
         if bucket_index > 0 {
-            world.task_contexts[worker_index as usize].manifold_counts
-                [(bucket_index - 1) as usize] += 1;
+            stats.manifold_counts[(bucket_index - 1) as usize] += 1;
         }
 
-        if touching
-            && was_touching
-            && (world.contacts[contact_index as usize].flags & contact_flags::SIM_MESH_CONTACT) != 0
-        {
-            let color_index = world.contacts[contact_index as usize].color_index;
-            let local_index = world.contacts[contact_index as usize].local_index;
+        if touching && was_touching && (contact.flags & contact_flags::SIM_MESH_CONTACT) != 0 {
+            let color_index = contact.color_index;
+            let local_index = contact.local_index;
             debug_assert!(color_index != NULL_INDEX);
             debug_assert!(0 <= color_index && color_index < GRAPH_COLOR_COUNT);
-            world.constraint_graph.colors[color_index as usize].contacts[local_index as usize]
-                .manifold_count = manifold_count as u16;
+            stats
+                .mesh_manifold_counts
+                .push((color_index, local_index, manifold_count as u16));
         }
 
         if touching && !was_touching {
-            world.contacts[contact_index as usize].flags |= contact_flags::SIM_STARTED_TOUCHING;
-            world.task_contexts[worker_index as usize]
-                .contact_state_bit_set
-                .set_bit(contact_index as u32);
+            contact.flags |= contact_flags::SIM_STARTED_TOUCHING;
+            stats.changed_contacts.push(contact_index);
         } else if !touching && was_touching {
-            world.contacts[contact_index as usize].flags |= contact_flags::SIM_STOPPED_TOUCHING;
-            world.task_contexts[worker_index as usize]
-                .contact_state_bit_set
-                .set_bit(contact_index as u32);
+            contact.flags |= contact_flags::SIM_STOPPED_TOUCHING;
+            stats.changed_contacts.push(contact_index);
         }
 
         if touching {
-            let manifold_count = world.contacts[contact_index as usize].manifold_count();
+            let manifold_count = contact.manifold_count();
             for manifold_index in 0..manifold_count as usize {
-                let point_count =
-                    world.contacts[contact_index as usize].manifolds[manifold_index].point_count;
+                let point_count = contact.manifolds[manifold_index].point_count;
                 for point_index in 0..point_count as usize {
                     // Cache separation
-                    let mp = &mut world.contacts[contact_index as usize].manifolds[manifold_index]
-                        .points[point_index];
+                    let mp = &mut contact.manifolds[manifold_index].points[point_index];
                     mp.base_separation = mp.separation;
                 }
             }
@@ -328,8 +345,90 @@ pub fn collide(world: &mut World, dt: f32) {
         task.manifold_counts = [0; CONTACT_MANIFOLD_COUNT_BUCKETS];
     }
 
-    // Serial: one worker covers the full range.
-    collide_task(world, &contact_indices, 0);
+    // Contact updates are independent and their outputs merge order-free, so they run in
+    // contact id order (sequential memory) and, with the `parallel` feature, on many threads.
+    // Mark the contacts to update, then take them in id order (sequential memory). A
+    // bit set is cheaper than sorting the ids.
+    let mut selected = vec![0u64; world.contacts.len().div_ceil(64)];
+    for &id in &contact_indices {
+        selected[id as usize / 64] |= 1u64 << (id % 64);
+    }
+    let params = ContactParams::new(world);
+    let recycle_distance = world.contact_recycle_distance;
+    let pool = world.thread_pool.clone();
+    let stats = {
+        let World {
+            contacts,
+            shapes,
+            fat_aabbs,
+            solver_sets,
+            bodies,
+            broad_phase,
+            ..
+        } = &mut *world;
+        let shared = CollideShared {
+            shapes,
+            fat_aabbs,
+            solver_sets,
+            bodies,
+            params,
+            recycle_distance,
+            recycle_distance_non_touching: min_float(recycle_distance, speculative_distance()),
+        };
+
+        // The contacts to update, in id order, borrowed out of the contact array.
+        let mut work: Vec<&mut Contact> = Vec::with_capacity(contact_indices.len());
+        for (block, chunk) in selected.iter().zip(contacts.chunks_mut(64)) {
+            let mut bits = *block;
+            if bits == 0 {
+                continue;
+            }
+            let mut rest = &mut chunk[..];
+            let mut base = 0usize;
+            while bits != 0 {
+                let i = bits.trailing_zeros() as usize;
+                let (_, tail) = rest.split_at_mut(i - base);
+                let (contact, tail) = tail.split_first_mut().expect("selected contact");
+                debug_assert!(contact.contact_id >= 0);
+                work.push(contact);
+                rest = tail;
+                base = i + 1;
+                bits &= bits - 1;
+            }
+        }
+        debug_assert!(work.len() == contact_indices.len());
+
+        // The trees rebuild alongside: the narrow phase reads the fat AABBs, not the trees.
+        let ((), stats) = crate::parallel::join(
+            pool.as_deref(),
+            || broad_phase.finish_tree_update(),
+            || {
+                crate::parallel::collide_contacts(pool.as_deref(), &mut work, |block| {
+                    let mut stats = CollideStats::default();
+                    for contact in block.iter_mut() {
+                        collide_contact(contact, &shared, &mut stats);
+                    }
+                    stats
+                })
+            },
+        );
+        stats
+    };
+
+    {
+        let task = &mut world.task_contexts[0];
+        task.sat_call_count = stats.sat_call_count;
+        task.sat_cache_hit_count = stats.sat_cache_hit_count;
+        task.recycled_contact_count = stats.recycled_contact_count;
+        task.manifold_counts = stats.manifold_counts;
+        for &contact_id in &stats.changed_contacts {
+            task.contact_state_bit_set.set_bit(contact_id as u32);
+        }
+    }
+    for &(color_index, local_index, manifold_count) in &stats.mesh_manifold_counts {
+        world.constraint_graph.colors[color_index as usize].contacts[local_index as usize]
+            .manifold_count = manifold_count;
+    }
 
     let sat_multiplier = if dt > 0.0 { 1 } else { 0 };
     world.sat_call_count = sat_multiplier * world.task_contexts[0].sat_call_count;

@@ -39,10 +39,17 @@ name = "box3d_rust"
 path = "src/lib.rs"
 
 [features]
+default = ["parallel"]
+# Run the step's parallel stages on a rayon pool when WorldDef::worker_count > 1.
+parallel = ["dep:rayon"]
 # Mirrors BOX3D_DOUBLE_PRECISION: double precision world positions for large worlds.
 double-precision = []
 
 [dependencies]
+# 128-bit SIMD for the wide solver and SAT kernels: SSE2, Neon, wasm simd128, scalar elsewhere.
+wide = { version = "0.7.33", default-features = false, features = ["std"] }
+bytemuck = "1"
+rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
 criterion = "0.5"

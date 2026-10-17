@@ -12,7 +12,7 @@
 // SPDX-License-Identifier: MIT
 
 use super::{get_joint_sim_check_type, get_joint_sim_check_type_ref, JointSim, JointType};
-use crate::body::{body_flags, get_body_transform, BodyState, IDENTITY_BODY_STATE};
+use crate::body::{body_flags, get_body_transform, IDENTITY_BODY_STATE};
 use crate::core::NULL_INDEX;
 use crate::id::JointId;
 use crate::math_functions::{
@@ -21,6 +21,7 @@ use crate::math_functions::{
     mul_sv2, negate_mat3, negate_quat, rotate_vector, skew, solve2, solve3, sub, sub2, sub_pos,
     Mat2, Transform, Vec2, Vec3, PI, VEC2_ZERO, VEC3_AXIS_X, VEC3_AXIS_Y, VEC3_AXIS_Z, VEC3_ZERO,
 };
+use crate::solver::states::SolverStates;
 use crate::solver::{make_soft, StepContext};
 use crate::solver_set::AWAKE_SET;
 use crate::world::World;
@@ -398,7 +399,7 @@ pub fn prepare_revolute_joint(world: &World, base: &mut JointSim, context: &Step
 }
 
 /// (b3WarmStartRevoluteJoint)
-pub fn warm_start_revolute_joint(base: &mut JointSim, states: &mut [BodyState]) {
+pub fn warm_start_revolute_joint(base: &mut JointSim, states: &SolverStates) {
     debug_assert!(base.type_ == JointType::Revolute);
 
     let m_a = base.inv_mass_a;
@@ -411,12 +412,12 @@ pub fn warm_start_revolute_joint(base: &mut JointSim, states: &mut [BodyState]) 
     let mut state_a = if joint.index_a == NULL_INDEX {
         IDENTITY_BODY_STATE
     } else {
-        states[joint.index_a as usize]
+        states.get(joint.index_a as usize)
     };
     let mut state_b = if joint.index_b == NULL_INDEX {
         IDENTITY_BODY_STATE
     } else {
-        states[joint.index_b as usize]
+        states.get(joint.index_b as usize)
     };
 
     let mut v_a = state_a.linear_velocity;
@@ -450,13 +451,13 @@ pub fn warm_start_revolute_joint(base: &mut JointSim, states: &mut [BodyState]) 
     if state_a.flags & body_flags::DYNAMIC_FLAG != 0 {
         state_a.linear_velocity = v_a;
         state_a.angular_velocity = w_a;
-        states[joint.index_a as usize] = state_a;
+        states.set(joint.index_a as usize, state_a);
     }
 
     if state_b.flags & body_flags::DYNAMIC_FLAG != 0 {
         state_b.linear_velocity = v_b;
         state_b.angular_velocity = w_b;
-        states[joint.index_b as usize] = state_b;
+        states.set(joint.index_b as usize, state_b);
     }
 }
 
@@ -465,7 +466,7 @@ pub fn warm_start_revolute_joint(base: &mut JointSim, states: &mut [BodyState]) 
 pub fn solve_revolute_joint(
     base: &mut JointSim,
     context: &StepContext,
-    states: &mut [BodyState],
+    states: &SolverStates,
     use_bias: bool,
 ) {
     let m_a = base.inv_mass_a;
@@ -479,12 +480,12 @@ pub fn solve_revolute_joint(
     let mut state_a = if joint.index_a == NULL_INDEX {
         IDENTITY_BODY_STATE
     } else {
-        states[joint.index_a as usize]
+        states.get(joint.index_a as usize)
     };
     let mut state_b = if joint.index_b == NULL_INDEX {
         IDENTITY_BODY_STATE
     } else {
-        states[joint.index_b as usize]
+        states.get(joint.index_b as usize)
     };
 
     let mut v_a = state_a.linear_velocity;
@@ -710,12 +711,12 @@ pub fn solve_revolute_joint(
     if state_a.flags & body_flags::DYNAMIC_FLAG != 0 {
         state_a.linear_velocity = v_a;
         state_a.angular_velocity = w_a;
-        states[joint.index_a as usize] = state_a;
+        states.set(joint.index_a as usize, state_a);
     }
 
     if state_b.flags & body_flags::DYNAMIC_FLAG != 0 {
         state_b.linear_velocity = v_b;
         state_b.angular_velocity = w_b;
-        states[joint.index_b as usize] = state_b;
+        states.set(joint.index_b as usize, state_b);
     }
 }

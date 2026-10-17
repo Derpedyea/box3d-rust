@@ -257,6 +257,14 @@ pub struct World {
     pub task_contexts: Vec<TaskContext>,
     pub sensor_task_contexts: Vec<SensorTaskContext>,
 
+    /// Per color constraint arrays the solver rebuilds every step. Kept between steps so
+    /// their memory stays mapped (C allocates them from the step arena).
+    pub(crate) wide_constraints: Vec<Vec<crate::contact_solver::wide::ContactConstraintWide>>,
+    pub(crate) solver_states: crate::solver::states::SolverStates,
+    /// Workers for the parallel stages; `None` runs them serially. See [`crate::parallel`].
+    pub(crate) thread_pool: Option<std::sync::Arc<crate::parallel::ThreadPool>>,
+    pub(crate) mesh_constraints: Vec<Vec<crate::contact_solver::ContactConstraint>>,
+
     pub body_move_events: Vec<BodyMoveEvent>,
     pub sensor_begin_events: Vec<SensorBeginTouchEvent>,
     pub contact_begin_events: Vec<ContactBeginTouchEvent>,
@@ -343,15 +351,16 @@ pub struct World {
     /// C holds a borrowed `b3Recording*`. Rust owns the recording for the
     /// session instead: a stored raw pointer would let the caller move or drop
     /// the recording mid-session (unsound), and would make `World` `!Send`.
-    /// The `RefCell` lets the `&World` query functions append their records,
-    /// which C does through the mutable pointer; mutators reach it without a
-    /// runtime borrow check via `RefCell::get_mut`.
+    /// The `Mutex` lets the `&World` query functions append their records,
+    /// which C does through the mutable pointer, and keeps `World` `Sync` so
+    /// the step can share it with worker threads; mutators reach it without
+    /// locking via `Mutex::get_mut`.
     ///
-    /// Do not hold a `borrow()` / `borrow_mut()` of this cell across a world
-    /// query call (overlap/cast/etc.): the query borrows it mutably to append
-    /// its record, so an outstanding borrow makes that call panic.
+    /// Do not hold a lock of this mutex across a world query call
+    /// (overlap/cast/etc.): the query locks it to append its record, so an
+    /// outstanding lock deadlocks that call.
     /// [`destroy_world`] finalizes and returns an active recording.
-    pub recording: Option<Box<std::cell::RefCell<crate::recording::Recording>>>,
+    pub recording: Option<Box<std::sync::Mutex<crate::recording::Recording>>>,
 }
 
 /// Default friction mixing: `sqrt(frictionA * frictionB)`.
@@ -468,6 +477,10 @@ impl World {
             // Serial fallback: one worker context. (b3CreateWorkerContexts)
             task_contexts: vec![TaskContext::default()],
             sensor_task_contexts: vec![SensorTaskContext::default()],
+            wide_constraints: Vec::new(),
+            thread_pool: None,
+            solver_states: Default::default(),
+            mesh_constraints: Vec::new(),
             body_move_events: Vec::with_capacity(4),
             sensor_begin_events: Vec::with_capacity(4),
             contact_begin_events: Vec::with_capacity(4),

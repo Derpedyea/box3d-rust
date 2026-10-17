@@ -14,11 +14,11 @@ use super::{
     warm_start_prismatic_joint, warm_start_revolute_joint, warm_start_spherical_joint,
     warm_start_weld_joint, warm_start_wheel_joint, JointSim, JointType,
 };
-use crate::body::{get_body_transform, BodyState};
 use crate::math_functions::{
     abs_float, add, cross, length, min_float, mul_add, mul_quat, normalize, rotate_vector, Vec3,
     VEC3_AXIS_Z,
 };
+use crate::solver::states::SolverStates;
 use crate::solver::{make_soft, StepContext};
 use crate::world::World;
 
@@ -42,7 +42,7 @@ pub fn prepare_joint(world: &World, base: &mut JointSim, context: &StepContext) 
 }
 
 /// (b3WarmStartJoint)
-pub fn warm_start_joint(base: &mut JointSim, states: &mut [BodyState]) {
+pub fn warm_start_joint(base: &mut JointSim, states: &SolverStates) {
     match base.type_ {
         JointType::Parallel => warm_start_parallel_joint(base, states),
         JointType::Distance => warm_start_distance_joint(base, states),
@@ -63,7 +63,7 @@ pub fn warm_start_joint(base: &mut JointSim, states: &mut [BodyState]) {
 pub fn solve_joint(
     base: &mut JointSim,
     context: &StepContext,
-    states: &mut [BodyState],
+    states: &SolverStates,
     use_bias: bool,
 ) {
     let _ = use_bias;
@@ -83,6 +83,20 @@ pub fn solve_joint(
 
 /// Scalar force/torque magnitudes from accumulated impulses. (b3GetJointReaction)
 pub fn get_joint_reaction(world: &World, sim: &JointSim, inv_time_step: f32) -> (f32, f32) {
+    get_joint_reaction_in(&world.bodies, &world.solver_sets, sim, inv_time_step)
+}
+
+/// [`get_joint_reaction`] on the body data it reads.
+pub(crate) fn get_joint_reaction_in(
+    bodies: &[crate::body::Body],
+    solver_sets: &[crate::solver_set::SolverSet],
+    sim: &JointSim,
+    inv_time_step: f32,
+) -> (f32, f32) {
+    let body_transform = |body_id: i32| {
+        let body = &bodies[body_id as usize];
+        solver_sets[body.set_index as usize].body_sims[body.local_index as usize].transform
+    };
     let mut linear_impulse = 0.0f32;
     let mut angular_impulse = 0.0f32;
 
@@ -137,8 +151,8 @@ pub fn get_joint_reaction(world: &World, sim: &JointSim, inv_time_step: f32) -> 
             let joint = sim.spherical();
             linear_impulse = length(joint.linear_impulse);
 
-            let xf_a = get_body_transform(world, sim.body_id_a);
-            let xf_b = get_body_transform(world, sim.body_id_b);
+            let xf_a = body_transform(sim.body_id_a);
+            let xf_b = body_transform(sim.body_id_b);
             let q_a = mul_quat(xf_a.q, sim.local_frame_a.q);
             let q_b = mul_quat(xf_b.q, sim.local_frame_b.q);
 

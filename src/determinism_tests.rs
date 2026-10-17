@@ -64,10 +64,7 @@ const MESH_DROP_SLEEP_STEP: i32 = 217;
 const MESH_DROP_HASH: u32 = 0x256B_C40B;
 
 // C loops each scenario over several worker counts to prove every schedule reproduces the
-// first run (EnsureRepeatable). The serial port ignores the worker count, so extra runs would
-// be identical work; exactly two runs per scenario keep the useful part of the check (run 2
-// in a fresh world must match run 1, which catches state leaking between worlds).
-const REPEAT_RUNS: i32 = 2;
+// first run (EnsureRepeatable); so does the port, with the `parallel` feature on.
 
 // The goldens above pin exact values for the default four point manifold. A build that
 // overrides B3_MAX_MANIFOLD_POINTS produces a different contact set, so those checks drop
@@ -129,9 +126,11 @@ fn ensure_ragdoll_golden(data: &FallingRagdollData, label: &str) {
     }
 }
 
-/// Serial equivalent of C `SingleMultithreadingTest`. `run` only labels the output.
-fn single_multithreading_test(run: i32, reference: &mut DeterminismResult) {
+/// (SingleMultithreadingTest) Each worker count must reproduce the golden result.
+fn single_multithreading_test(worker_count: i32, reference: &mut DeterminismResult) {
+    let run = worker_count;
     let mut world = World::new(&default_world_def());
+    crate::world::world_set_worker_count(&mut world, worker_count);
     let mut data = create_falling_ragdolls(&mut world);
 
     let time_step = 1.0 / 60.0;
@@ -162,7 +161,7 @@ fn single_multithreading_test(run: i32, reference: &mut DeterminismResult) {
 #[test]
 fn multithreading_test() {
     let mut reference = DeterminismResult::default();
-    for run in 1..=REPEAT_RUNS {
+    for run in 1..6 {
         single_multithreading_test(run, &mut reference);
     }
 }
@@ -186,9 +185,11 @@ fn cross_platform_test() {
     destroy_falling_ragdolls(&mut data);
 }
 
-/// Serial equivalent of C `SingleWavePileTest`.
-fn single_wave_pile_test(run: i32, reference: &mut DeterminismResult) {
+/// (SingleWavePileTest)
+fn single_wave_pile_test(worker_count: i32, reference: &mut DeterminismResult) {
+    let run = worker_count;
     let mut world = World::new(&default_world_def());
+    crate::world::world_set_worker_count(&mut world, worker_count);
     let mut data = create_wave_pile(&mut world);
 
     let time_step = 1.0 / 60.0;
@@ -236,14 +237,16 @@ fn single_wave_pile_test(run: i32, reference: &mut DeterminismResult) {
 #[test]
 fn wave_pile_test() {
     let mut reference = DeterminismResult::default();
-    for run in 1..=REPEAT_RUNS {
+    for run in 1..=4 {
         single_wave_pile_test(run, &mut reference);
     }
 }
 
-/// Serial equivalent of C `SingleQuerySpawnTest`.
-fn single_query_spawn_test(run: i32, reference: &mut DeterminismResult) {
+/// (SingleQuerySpawnTest)
+fn single_query_spawn_test(worker_count: i32, reference: &mut DeterminismResult) {
+    let run = worker_count;
     let mut world = World::new(&default_world_def());
+    crate::world::world_set_worker_count(&mut world, worker_count);
     let mut data = create_query_spawn(&mut world);
 
     let time_step = 1.0 / 60.0;
@@ -316,14 +319,16 @@ fn single_query_spawn_test(run: i32, reference: &mut DeterminismResult) {
 #[test]
 fn query_spawn_test() {
     let mut reference = DeterminismResult::default();
-    for run in 1..=REPEAT_RUNS {
+    for run in 1..=4 {
         single_query_spawn_test(run, &mut reference);
     }
 }
 
-/// Serial equivalent of C `SingleMeshDropTest`.
-fn single_mesh_drop_test(run: i32, reference: &mut DeterminismResult) {
+/// (SingleMeshDropTest)
+fn single_mesh_drop_test(worker_count: i32, reference: &mut DeterminismResult) {
+    let run = worker_count;
     let mut world = World::new(&default_world_def());
+    crate::world::world_set_worker_count(&mut world, worker_count);
     let mut data = create_mesh_drop(&mut world, POS_ZERO);
 
     let time_step = 1.0 / 60.0;
@@ -370,7 +375,7 @@ fn single_mesh_drop_test(run: i32, reference: &mut DeterminismResult) {
 #[test]
 fn mesh_drop_test() {
     let mut reference = DeterminismResult::default();
-    for run in 1..=REPEAT_RUNS {
+    for run in [1, 4] {
         single_mesh_drop_test(run, &mut reference);
     }
 }

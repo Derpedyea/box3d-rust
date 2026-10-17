@@ -24,6 +24,7 @@ impl World {
         });
 
         self.locked = true;
+        let step_ticks = crate::timer::get_ticks();
 
         self.body_move_events.clear();
         self.sensor_begin_events.clear();
@@ -52,7 +53,12 @@ impl World {
             c.contact_count = max_int(c.contact_count, self.contact_id_pool.id_count());
         }
 
-        update_broad_phase_pairs(self);
+        // Update collision pairs and create contacts
+        {
+            let pair_ticks = crate::timer::get_ticks();
+            update_broad_phase_pairs(self);
+            self.profile.pairs = crate::timer::get_milliseconds(pair_ticks);
+        }
 
         let sub_steps = max_int(1, sub_step_count);
         let mut context = StepContext {
@@ -86,7 +92,12 @@ impl World {
         context.contact_speed = self.contact_speed;
         context.enable_warm_starting = self.enable_warm_starting;
 
-        crate::contact::collide(self, time_step);
+        // Update contacts
+        {
+            let collide_ticks = crate::timer::get_ticks();
+            crate::contact::collide(self, time_step);
+            self.profile.collide = crate::timer::get_milliseconds(collide_ticks);
+        }
 
         // C finishes the user tree task (and validates the trees) inside b3Solve, right
         // before body finalization, which is skipped when the step is zero or nothing is
@@ -102,8 +113,15 @@ impl World {
         let solve_finishes_tree_task = time_step > 0.0 && !awake_set_empty;
         let tree_task_pending = !solve_finishes_tree_task;
 
+        // Solve velocities, integrate positions, and update the broad-phase
+        // The tree rebuild queued by pair finding runs with the narrow phase; finish it here
+        // if that didn't run.
+        self.broad_phase.finish_tree_update();
+
         if time_step > 0.0 {
+            let solve_ticks = crate::timer::get_ticks();
             solve(self, &context);
+            self.profile.solve = crate::timer::get_milliseconds(solve_ticks);
         }
 
         // Finish the tree task in case b3Solve didn't finish it
@@ -112,7 +130,13 @@ impl World {
         }
 
         // Update sensors (after solve; C physics_world.c runs b3OverlapSensors here)
-        crate::sensor::overlap_sensors(self);
+        {
+            let sensor_ticks = crate::timer::get_ticks();
+            crate::sensor::overlap_sensors(self);
+            self.profile.sensors = crate::timer::get_milliseconds(sensor_ticks);
+        }
+
+        self.profile.step = crate::timer::get_milliseconds(step_ticks);
 
         self.step_index = self.step_index.wrapping_add(1);
         self.validate_solver_sets();

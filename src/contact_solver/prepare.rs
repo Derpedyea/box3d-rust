@@ -4,7 +4,7 @@
 //! SPDX-License-Identifier: MIT
 
 use super::{ContactConstraint, ManifoldConstraint, ManifoldConstraintPoint};
-use crate::body::{decode_awake_index, BodySim, BodyState};
+use crate::body::{decode_awake_index, BodySim};
 use crate::constants::{speculative_distance, MIN_FRICTION_WEIGHT};
 use crate::contact::{contact_flags, Contact};
 use crate::core::NULL_INDEX;
@@ -12,6 +12,7 @@ use crate::math_functions::{
     add, add_mm, clamp_float, cross, distance, dot, invert2, invert_matrix, mul_add, mul_mv,
     mul_sv, perp, sub, Vec2, MAT2_ZERO, MAT3_ZERO, VEC3_ZERO,
 };
+use crate::solver::states::SolverStates;
 use crate::solver::StepContext;
 
 // contact separation for sub-stepping
@@ -32,7 +33,7 @@ use crate::solver::StepContext;
 pub fn prepare_one_contact(
     contact: &mut Contact,
     sims: &[BodySim],
-    states: &[BodyState],
+    states: &SolverStates,
     context: &StepContext,
     warm_start_scale: f32,
 ) -> ContactConstraint {
@@ -94,13 +95,13 @@ pub fn prepare_one_contact(
 
     if sample_velocity {
         if index_a != NULL_INDEX {
-            v_a = states[index_a as usize].linear_velocity;
-            w_a = states[index_a as usize].angular_velocity;
+            v_a = states.get(index_a as usize).linear_velocity;
+            w_a = states.get(index_a as usize).angular_velocity;
         }
 
         if index_b != NULL_INDEX {
-            v_b = states[index_b as usize].linear_velocity;
-            w_b = states[index_b as usize].angular_velocity;
+            v_b = states.get(index_b as usize).linear_velocity;
+            w_b = states.get(index_b as usize).angular_velocity;
         }
     }
 
@@ -222,34 +223,26 @@ pub fn prepare_one_contact(
 /// contact has restitution. (b3PrepareContacts_Mesh — serial)
 pub fn prepare_mesh_contacts(
     constraints: &mut Vec<ContactConstraint>,
-    mesh_specs: &[crate::contact::ContactSpec],
-    contacts: &mut [Contact],
+    lanes: &mut [&mut Contact],
     sims: &[BodySim],
-    states: &[BodyState],
+    states: &SolverStates,
     context: &StepContext,
+    pool: Option<&crate::parallel::ThreadPool>,
 ) -> bool {
     let warm_start_scale = if context.enable_warm_starting {
         1.0
     } else {
         0.0
     };
-    let mut any_restitution = false;
+    let any_restitution = std::sync::atomic::AtomicBool::new(false);
 
-    constraints.clear();
-    constraints.reserve(mesh_specs.len());
+    crate::parallel::map_chunks_into(pool, lanes, 1, constraints, |lane| {
+        let contact = &mut *lane[0];
+        if contact.restitution > 0.0 {
+            any_restitution.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        prepare_one_contact(contact, sims, states, context, warm_start_scale)
+    });
 
-    for spec in mesh_specs {
-        let contact = &mut contacts[spec.contact_id as usize];
-        debug_assert!(contact.contact_id == spec.contact_id);
-        any_restitution = any_restitution || contact.restitution > 0.0;
-        constraints.push(prepare_one_contact(
-            contact,
-            sims,
-            states,
-            context,
-            warm_start_scale,
-        ));
-    }
-
-    any_restitution
+    any_restitution.into_inner()
 }

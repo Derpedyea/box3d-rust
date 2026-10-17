@@ -7,18 +7,18 @@ use super::{
     gather_bodies, make_matrix_from_quat_w, mul_add_mvw, mul_m3vw, mul_sub_mvw, scatter_bodies,
     ContactConstraintWide,
 };
-use crate::body::BodyState;
-use crate::simd_scalar::{
+use crate::simd::{
     add_vw, add_w, all_zero_w, and_w, blend_w, cross_w, dot_w, greater_than_w, less_than_w, max_w,
     min_w, mul_add_svw, mul_sub_svw, mul_svw, mul_w, neg_w, splat_w, sub_vw, sub_w, zero_w,
 };
+use crate::solver::states::SolverStates;
 use crate::solver::StepContext;
 
 /// Poisson kinetic restitution for the wide convex constraints of one color.
 /// (b3ApplyRestitution_Convex)
 pub fn apply_restitution_convex(
     constraints: &mut [ContactConstraintWide],
-    states: &mut [BodyState],
+    states: &SolverStates,
     context: &StepContext,
     restitution_threshold: f32,
     propagate: bool,

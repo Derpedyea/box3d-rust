@@ -112,7 +112,9 @@ fn update_pairs_creates_contact_for_overlap() {
         world.solver_sets[AWAKE_SET as usize].contact_indices.len(),
         1
     );
-    // The pair update clears the static marks and the tree rebuild clears the others.
+    // The pair update clears the static marks and the tree rebuild it queues (which the
+    // narrow phase runs) clears the others.
+    world.broad_phase.finish_tree_update();
     assert!(world
         .broad_phase
         .trees

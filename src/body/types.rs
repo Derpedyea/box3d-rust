@@ -191,29 +191,41 @@ impl Default for Body {
 
 /// Body state designed for fast conversion to and from SIMD via scatter-gather.
 /// Only awake dynamic and kinematic bodies have a body state. Used in the
-/// performance critical constraint solver. (b3BodyState, 56 bytes)
+/// performance critical constraint solver. (b3BodyState, 64 bytes)
+///
+/// The layout matches C's: four 16-byte rows (velocity, angular velocity, delta position
+/// with the flags in its fourth lane, delta rotation), so the wide solver gathers four
+/// states with 4x4 transposes. The padding lanes stay zero.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C, align(16))]
 pub struct BodyState {
     pub linear_velocity: Vec3,
+    pub(crate) padding1: f32,
+
     pub angular_velocity: Vec3,
+    pub(crate) padding2: f32,
 
     /// Using delta position reduces round-off error far from the origin
     pub delta_position: Vec3,
 
-    /// Delta rotation; identity for static bodies via a dummy state
-    pub delta_rotation: Quat,
-
     /// body_flags bits — important: locking, dynamic
     pub flags: u32,
+
+    /// Delta rotation; identity for static bodies via a dummy state
+    pub delta_rotation: Quat,
 }
+
+const _: () = assert!(core::mem::size_of::<BodyState>() == 64);
 
 /// Identity body state; notice delta_rotation is identity. (b3_identityBodyState)
 pub const IDENTITY_BODY_STATE: BodyState = BodyState {
     linear_velocity: VEC3_ZERO,
+    padding1: 0.0,
     angular_velocity: VEC3_ZERO,
+    padding2: 0.0,
     delta_position: VEC3_ZERO,
-    delta_rotation: QUAT_IDENTITY,
     flags: 0,
+    delta_rotation: QUAT_IDENTITY,
 };
 
 impl Default for BodyState {

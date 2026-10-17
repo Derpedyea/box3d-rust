@@ -3,29 +3,23 @@
 //! SPDX-FileCopyrightText: 2025 Erin Catto
 //! SPDX-License-Identifier: MIT
 
-use super::{lane, ContactConstraintWide, EMPTY_LANE};
-use crate::bitset::BitSet;
+use super::{lane, ContactConstraintWide};
 use crate::contact::{contact_flags, Contact};
 use crate::core::SIMD_WIDTH;
 use crate::math_functions::Vec3;
 
-/// Store impulses by contact constraint and flag hit-event candidates.
+/// Store impulses by contact constraint and return the contacts that are hit-event
+/// candidates. `lanes` holds the color's convex contacts in order, four per constraint.
 /// (b3StoreImpulses_Convex)
 pub fn store_impulses_convex(
     constraints: &[ContactConstraintWide],
-    contacts: &mut [Contact],
-    hit_event_bit_set: &mut BitSet,
-    has_hit_events: &mut bool,
+    lanes: &mut [&mut Contact],
     neg_hit_threshold: f32,
-) {
-    for c in constraints {
-        for l in 0..SIMD_WIDTH {
-            let contact_id = c.contact_ids[l];
-            if contact_id == EMPTY_LANE {
-                break;
-            }
-
-            let contact = &mut contacts[contact_id as usize];
+    pool: Option<&crate::parallel::ThreadPool>,
+) -> Vec<i32> {
+    crate::parallel::zip_chunks(pool, constraints, lanes, SIMD_WIDTH, |c, chunk, hits| {
+        for (l, contact) in chunk.iter_mut().enumerate() {
+            debug_assert!(c.contact_ids[l] == contact.contact_id);
             let m = &mut contact.manifolds[0];
 
             let f1 = lane(c.friction_impulse.x, l);
@@ -56,12 +50,11 @@ pub fn store_impulses_convex(
 
                     // Need to check total impulse because the point may be speculative and not colliding
                     if mp.normal_velocity < neg_hit_threshold && mp.total_normal_impulse > 0.0 {
-                        hit_event_bit_set.set_bit(contact.contact_id as u32);
-                        *has_hit_events = true;
+                        hits.push(contact.contact_id);
                         break;
                     }
                 }
             }
         }
-    }
+    })
 }

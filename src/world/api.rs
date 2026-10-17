@@ -666,9 +666,9 @@ pub fn world_get_bounds(world: &World) -> Aabb {
     world_bounds
 }
 
-/// Set the stored worker count. Clamped to `[1, MAX_WORKERS]`. The serial port
-/// does not spawn threads but still resizes task contexts like C.
-/// (b3World_SetWorkerCount)
+/// Set the worker count. Clamped to `[1, MAX_WORKERS]`. Above 1, with the `parallel`
+/// feature, the world runs its parallel stages on a pool of that many threads; results are
+/// bit-identical for every count. (b3World_SetWorkerCount)
 pub fn world_set_worker_count(world: &mut World, count: i32) {
     debug_assert!(!world.locked);
     if world.locked {
@@ -684,6 +684,7 @@ pub fn world_set_worker_count(world: &mut World, count: i32) {
     // resize and zero the per-worker scratch arrays.
     world.task_contexts = vec![TaskContext::default(); world.worker_count as usize];
     world.sensor_task_contexts = vec![SensorTaskContext::default(); world.worker_count as usize];
+    world.thread_pool = crate::parallel::make_pool(world.worker_count);
 }
 
 /// Get the stored worker count. (b3World_GetWorkerCount)

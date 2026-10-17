@@ -114,15 +114,17 @@ pub mod math_functions;
 pub mod mesh;
 pub mod mover;
 pub mod name_cache;
+pub(crate) mod parallel;
 mod parallel_for;
 pub mod rapidhash;
 pub mod recording;
 pub mod sensor;
 pub mod shape;
-pub(crate) mod simd_scalar;
+pub(crate) mod simd;
 pub mod solver;
 pub mod solver_set;
 pub mod table;
+pub mod timer;
 pub mod types;
 pub mod world;
 

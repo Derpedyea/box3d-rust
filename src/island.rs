@@ -636,9 +636,14 @@ pub fn split_island(world: &mut World, base_id: i32) {
 
 /// Validate island connectivity and bookkeeping. (b3ValidateIsland)
 ///
-/// C compiles this only with B3_VALIDATE; here it always runs and asserts in
-/// debug builds.
+/// C compiles this only with B3_VALIDATE; here it runs in debug builds only. It walks the
+/// whole island with bounds-checked indexing, which release builds can't optimize away,
+/// on every contact that starts touching.
 pub fn validate_island(world: &World, island_id: i32) {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+
     if island_id == NULL_INDEX {
         return;
     }

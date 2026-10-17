@@ -4,13 +4,16 @@
 //! SPDX-FileCopyrightText: 2025 Erin Catto
 //! SPDX-License-Identifier: MIT
 
-use super::continuous::solve_continuous;
+use super::continuous::{continuous_apply, continuous_compute};
+use super::states::SolverStates;
 use super::StepContext;
 use crate::body::body_flags;
+use crate::body::{Body, BodySim, BodyState};
 use crate::constants::{speculative_distance, MAX_ROTATION, TIME_TO_SLEEP};
 use crate::core::NULL_INDEX;
 use crate::events::BodyMoveEvent;
 use crate::id::BodyId;
+use crate::math_functions::Aabb;
 use crate::math_functions::{
     aabb_contains, aabb_inflate, abs, blend2, dot, integrate_rotation, inv_rotate_vector,
     invert_matrix, is_valid_vec3, length, make_matrix_from_quat, max_float, modified_cross,
@@ -23,17 +26,18 @@ use crate::world::World;
 
 /// Integrate velocities, apply damping, and gyroscopic torque.
 /// (b3IntegrateVelocitiesTask)
-pub(super) fn integrate_velocities(world: &mut World, context: &StepContext) {
-    let gravity = world.gravity;
+pub(super) fn integrate_velocities(
+    sims: &[BodySim],
+    gravity: Vec3,
+    states: &SolverStates,
+    context: &StepContext,
+    range: std::ops::Range<usize>,
+) {
     let h = context.h;
 
-    let set = &mut world.solver_sets[AWAKE_SET as usize];
-    let sims = &set.body_sims;
-    let states = &mut set.body_states;
-
-    for i in 0..states.len() {
+    for i in range {
         let sim = &sims[i];
-        let state = &mut states[i];
+        let mut state = states.get(i);
 
         let mut v = state.linear_velocity;
         let mut w = state.angular_velocity;
@@ -112,20 +116,24 @@ pub(super) fn integrate_velocities(world: &mut World, context: &StepContext) {
 
         state.linear_velocity = v;
         state.angular_velocity = w;
+        states.set(i, state);
     }
 }
 
 /// (b3IntegratePositionsTask)
-pub(super) fn integrate_positions(world: &mut World, context: &StepContext) {
+pub(super) fn integrate_positions(
+    states: &SolverStates,
+    context: &StepContext,
+    range: std::ops::Range<usize>,
+) {
     let h = context.h;
     let max_linear_speed = context.max_linear_velocity;
     let max_angular_speed = MAX_ROTATION * context.inv_dt;
     let max_linear_speed_squared = max_linear_speed * max_linear_speed;
     let max_angular_speed_squared = max_angular_speed * max_angular_speed;
 
-    let states = &mut world.solver_sets[AWAKE_SET as usize].body_states;
-
-    for state in states.iter_mut() {
+    for i in range {
+        let mut state = states.get(i);
         let mut v = state.linear_velocity;
         let mut w = state.angular_velocity;
 
@@ -166,190 +174,369 @@ pub(super) fn integrate_positions(world: &mut World, context: &StepContext) {
         state.angular_velocity = w;
         state.delta_position = mul_add(state.delta_position, h, v);
         state.delta_rotation = integrate_rotation(state.delta_rotation, mul_sv(h, w));
+        states.set(i, state);
     }
+}
+
+/// What finalizing a body reads besides its own data.
+struct FinalizeShared<'a> {
+    islands: &'a [crate::island::Island],
+    enable_sleep: bool,
+    enable_continuous: bool,
+    time_step: f32,
+    inv_time_step: f32,
+    world_id: u16,
+}
+
+/// What finalizing a block of bodies produces for the serial tail: C does these through
+/// atomics and per-worker bit sets.
+#[derive(Default)]
+struct FinalizeOut {
+    awake_islands: Vec<i32>,
+    /// The (sleep time, island id) split candidate, the lexicographic max.
+    split: Option<(f32, i32)>,
+    /// Fast non-bullet bodies, by sim index, whose continuous collision and remaining
+    /// finalization run after the parallel pass.
+    fast: Vec<i32>,
+    bullets: Vec<i32>,
+}
+
+impl FinalizeOut {
+    fn merge(mut self, mut other: FinalizeOut) -> FinalizeOut {
+        self.awake_islands.append(&mut other.awake_islands);
+        self.split = max_split(self.split, other.split);
+        self.fast.append(&mut other.fast);
+        self.bullets.append(&mut other.bullets);
+        self
+    }
+}
+
+/// Larger sleep time wins, then larger island id. (the b3TaskContext split candidate)
+fn max_split(a: Option<(f32, i32)>, b: Option<(f32, i32)>) -> Option<(f32, i32)> {
+    match (a, b) {
+        (Some(x), Some(y)) => {
+            if y.0 > x.0 || (y.0 == x.0 && y.1 > x.1) {
+                Some(y)
+            } else {
+                Some(x)
+            }
+        }
+        (x, None) => x,
+        (None, y) => y,
+    }
+}
+
+/// The first part of b3FinalizeBodiesTask for one body, up to continuous collision. Returns
+/// true if the body is fast and not a bullet, so continuous collision must run before
+/// [`finalize_body_tail`].
+#[allow(clippy::too_many_arguments)]
+fn finalize_body_head(
+    sim_index: usize,
+    sim: &mut BodySim,
+    state: &mut BodyState,
+    move_event: &mut BodyMoveEvent,
+    body: &mut Body,
+    shared: &FinalizeShared<'_>,
+    out: &mut FinalizeOut,
+) -> bool {
+    let v = state.linear_velocity;
+    let w = state.angular_velocity;
+    let local_omega = inv_rotate_vector(sim.transform.q, w);
+    let local_delta_rotation = inv_rotate_vector(sim.transform.q, state.delta_rotation.v);
+
+    debug_assert!(is_valid_vec3(v));
+    debug_assert!(is_valid_vec3(w));
+
+    sim.center = offset_pos(sim.center, state.delta_position);
+    sim.transform.q = normalize_quat(mul_quat(state.delta_rotation, sim.transform.q));
+
+    let velocity_arc = modified_cross(abs(local_omega), sim.max_extent);
+    let max_velocity = length(v) + length(velocity_arc);
+
+    let rotation_arc = modified_cross(abs(local_delta_rotation), sim.max_extent);
+    let max_delta_position = length(state.delta_position) + 2.0 * length(rotation_arc);
+
+    let position_sleep_factor = 0.5;
+    let sleep_velocity = max_float(
+        max_velocity,
+        position_sleep_factor * shared.inv_time_step * max_delta_position,
+    );
+
+    state.delta_position = VEC3_ZERO;
+    state.delta_rotation = QUAT_IDENTITY;
+
+    sim.transform.p = offset_pos(
+        sim.center,
+        neg(rotate_vector(sim.transform.q, sim.local_center)),
+    );
+
+    let body_id = sim.body_id;
+    body.body_move_index = sim_index as i32;
+    body.sleep_velocity = sleep_velocity;
+    *move_event = BodyMoveEvent {
+        user_data: body.user_data,
+        transform: sim.transform,
+        body_id: BodyId {
+            index1: body_id + 1,
+            world0: shared.world_id,
+            generation: body.generation,
+        },
+        fell_asleep: false,
+    };
+
+    sim.force = VEC3_ZERO;
+    sim.torque = VEC3_ZERO;
+
+    debug_assert!((body.flags & body_flags::DIRTY_MASS) == 0);
+
+    // Clear the transient flags (fast, speed capped, had TOI). These flags are conditionally set
+    // as part of the code below.
+    body.flags &= !body_flags::BODY_TRANSIENT_FLAGS;
+    sim.flags &= !(body_flags::IS_FAST | body_flags::BODY_TRANSIENT_FLAGS);
+
+    // The body state flag knows about speed capping (used for debug draw).
+    body.flags |= state.flags & body_flags::IS_SPEED_CAPPED;
+    state.flags &= !body_flags::BODY_TRANSIENT_FLAGS;
+
+    if !shared.enable_sleep
+        || (body.flags & body_flags::ENABLE_SLEEP) == 0
+        || sleep_velocity > body.sleep_threshold
+    {
+        body.sleep_time = 0.0;
+
+        let max_motion = max_float(max_delta_position, max_velocity * shared.time_step);
+        if body.type_ == BodyType::Dynamic
+            && shared.enable_continuous
+            && max_motion > body.safety_factor * sim.min_extent
+        {
+            // This flag is used for debug draw and contact recycling.
+            sim.flags |= body_flags::IS_FAST;
+
+            if (sim.flags & body_flags::IS_BULLET) != 0 {
+                out.bullets.push(sim_index as i32);
+            } else {
+                out.fast.push(sim_index as i32);
+                return true;
+            }
+        } else {
+            sim.center0 = sim.center;
+            sim.rotation0 = sim.transform.q;
+        }
+    } else {
+        sim.center0 = sim.center;
+        sim.rotation0 = sim.transform.q;
+        body.sleep_time += shared.time_step;
+    }
+    false
+}
+
+/// The rest of b3FinalizeBodiesTask for one body.
+fn finalize_body_tail(
+    sim: &mut BodySim,
+    body: &Body,
+    shared: &FinalizeShared<'_>,
+    out: &mut FinalizeOut,
+) {
+    let rotation_matrix = make_matrix_from_quat(sim.transform.q);
+    sim.inv_inertia_world = mul_mm(
+        mul_mm(rotation_matrix, sim.inv_inertia_local),
+        transpose(rotation_matrix),
+    );
+
+    let sleep_time = body.sleep_time;
+    let island_id = body.island_id;
+    if island_id != NULL_INDEX {
+        if sleep_time < TIME_TO_SLEEP {
+            out.awake_islands
+                .push(shared.islands[island_id as usize].local_index);
+        } else if shared.islands[island_id as usize].constraint_remove_count > 0 {
+            out.split = max_split(out.split, Some((sleep_time, island_id)));
+        }
+    }
+
+    // The shape AABBs update in [`update_shape_aabbs`].
+}
+
+/// Update the AABBs of the shapes of awake bodies that aren't fast, in parallel over the
+/// shapes, and return the proxies that left their fat AABB.
+/// For fast non-bullet bodies the AABB has already been updated in b3SolveContinuous
+/// For fast bullet bodies the AABB will be updated at a later stage
+/// (the shape loop of b3FinalizeBodiesTask)
+fn update_shape_aabbs(world: &mut World) -> Vec<(i32, Aabb)> {
+    let speculative = speculative_distance();
+    let World {
+        shapes,
+        fat_aabbs,
+        bodies,
+        solver_sets,
+        thread_pool,
+        ..
+    } = &mut *world;
+    debug_assert!(shapes.len() <= fat_aabbs.len());
+    let sims = &solver_sets[AWAKE_SET as usize].body_sims;
+    let bodies = &*bodies;
+    let mut items: Vec<(&mut crate::shape::Shape, &mut Aabb)> =
+        shapes.iter_mut().zip(fat_aabbs.iter_mut()).collect();
+    crate::parallel::map_reduce_blocks(
+        thread_pool.as_deref(),
+        &mut items,
+        64,
+        |block| {
+            let mut moved = Vec::new();
+            for (shape, fat_aabb) in block.iter_mut() {
+                if shape.id == NULL_INDEX {
+                    continue;
+                }
+                let body = &bodies[shape.body_id as usize];
+                if body.set_index != AWAKE_SET {
+                    continue;
+                }
+                let sim = &sims[body.local_index as usize];
+                if (sim.flags & body_flags::IS_FAST) != 0 {
+                    continue;
+                }
+                let aabb = crate::shape::compute_fat_shape_aabb(shape, sim.transform, speculative);
+                shape.aabb = aabb;
+                if !aabb_contains(**fat_aabb, aabb) {
+                    **fat_aabb = aabb_inflate(aabb, shape.aabb_margin);
+                    moved.push((shape.proxy_key, **fat_aabb));
+                }
+            }
+            moved
+        },
+        |mut a, mut b| {
+            a.append(&mut b);
+            a
+        },
+    )
 }
 
 /// Finalize awake bodies after the constraint solve, including fast-body / bullet
 /// detection for continuous collision. (b3FinalizeBodiesTask)
+///
+/// Bodies finalize in parallel. The writes C makes through atomics (moving broad-phase
+/// proxies, island bits, the split candidate) and continuous collision for fast non-bullet
+/// bodies, which only reads static shapes, run after, in body order.
 pub(super) fn finalize_bodies(
     world: &mut World,
     context: &StepContext,
     bullet_bodies: &mut Vec<i32>,
 ) {
-    let enable_sleep = world.enable_sleep;
-    let enable_continuous = world.enable_continuous;
-    let time_step = context.dt;
-    let inv_time_step = context.inv_dt;
-    let world_id = world.world_id;
-    let speculative = speculative_distance();
-
     let awake_body_count = world.solver_sets[AWAKE_SET as usize].body_sims.len();
     debug_assert!(awake_body_count <= world.body_move_events.len());
 
-    for sim_index in 0..awake_body_count {
-        let mut state = world.solver_sets[AWAKE_SET as usize].body_states[sim_index];
-        let mut sim = world.solver_sets[AWAKE_SET as usize].body_sims[sim_index];
+    let pool = world.thread_pool.clone();
+    let enable_sleep = world.enable_sleep;
+    let enable_continuous = world.enable_continuous;
+    let world_id = world.world_id;
+    let out = {
+        let World {
+            bodies,
+            islands,
+            solver_sets,
+            body_move_events,
+            ..
+        } = &mut *world;
+        let shared = FinalizeShared {
+            islands,
+            enable_sleep,
+            enable_continuous,
+            time_step: context.dt,
+            inv_time_step: context.inv_dt,
+            world_id,
+        };
 
-        let v = state.linear_velocity;
-        let w = state.angular_velocity;
-        let local_omega = inv_rotate_vector(sim.transform.q, w);
-        let local_delta_rotation = inv_rotate_vector(sim.transform.q, state.delta_rotation.v);
-
-        debug_assert!(is_valid_vec3(v));
-        debug_assert!(is_valid_vec3(w));
-
-        sim.center = offset_pos(sim.center, state.delta_position);
-        sim.transform.q = normalize_quat(mul_quat(state.delta_rotation, sim.transform.q));
-
-        let velocity_arc = modified_cross(abs(local_omega), sim.max_extent);
-        let max_velocity = length(v) + length(velocity_arc);
-
-        let rotation_arc = modified_cross(abs(local_delta_rotation), sim.max_extent);
-        let max_delta_position = length(state.delta_position) + 2.0 * length(rotation_arc);
-
-        let position_sleep_factor = 0.5;
-        let sleep_velocity = max_float(
-            max_velocity,
-            position_sleep_factor * inv_time_step * max_delta_position,
-        );
-
-        state.delta_position = VEC3_ZERO;
-        state.delta_rotation = QUAT_IDENTITY;
-
-        sim.transform.p = offset_pos(
-            sim.center,
-            neg(rotate_vector(sim.transform.q, sim.local_center)),
-        );
-
-        let body_id = sim.body_id;
-
-        {
-            let body = &mut world.bodies[body_id as usize];
-            body.body_move_index = sim_index as i32;
-            body.sleep_velocity = sleep_velocity;
-            world.body_move_events[sim_index] = BodyMoveEvent {
-                user_data: body.user_data,
-                transform: sim.transform,
-                body_id: BodyId {
-                    index1: body_id + 1,
-                    world0: world_id,
-                    generation: body.generation,
-                },
-                fell_asleep: false,
-            };
-        }
-
-        sim.force = VEC3_ZERO;
-        sim.torque = VEC3_ZERO;
-
-        debug_assert!((world.bodies[body_id as usize].flags & body_flags::DIRTY_MASS) == 0);
-
-        // Clear the transient flags (fast, speed capped, had TOI). These flags are conditionally set
-        // as part of the code below.
-        world.bodies[body_id as usize].flags &= !body_flags::BODY_TRANSIENT_FLAGS;
-        sim.flags &= !(body_flags::IS_FAST | body_flags::BODY_TRANSIENT_FLAGS);
-
-        // The body state flag knows about speed capping (used for debug draw).
-        world.bodies[body_id as usize].flags |= state.flags & body_flags::IS_SPEED_CAPPED;
-        state.flags &= !body_flags::BODY_TRANSIENT_FLAGS;
-
-        let body_flags_now = world.bodies[body_id as usize].flags;
-        let sleep_threshold = world.bodies[body_id as usize].sleep_threshold;
-        let body_type = world.bodies[body_id as usize].type_;
-
-        if !enable_sleep
-            || (body_flags_now & body_flags::ENABLE_SLEEP) == 0
-            || sleep_velocity > sleep_threshold
-        {
-            world.bodies[body_id as usize].sleep_time = 0.0;
-
-            let safety_factor = world.bodies[body_id as usize].safety_factor;
-            let max_motion = max_float(max_delta_position, max_velocity * time_step);
-            if body_type == BodyType::Dynamic
-                && enable_continuous
-                && max_motion > safety_factor * sim.min_extent
-            {
-                // This flag is used for debug draw and contact recycling.
-                sim.flags |= body_flags::IS_FAST;
-
-                world.solver_sets[AWAKE_SET as usize].body_states[sim_index] = state;
-                world.solver_sets[AWAKE_SET as usize].body_sims[sim_index] = sim;
-
-                if (sim.flags & body_flags::IS_BULLET) != 0 {
-                    bullet_bodies.push(sim_index as i32);
-                } else {
-                    solve_continuous(world, sim_index as i32, time_step);
-                }
-
-                sim = world.solver_sets[AWAKE_SET as usize].body_sims[sim_index];
-                state = world.solver_sets[AWAKE_SET as usize].body_states[sim_index];
-            } else {
-                sim.center0 = sim.center;
-                sim.rotation0 = sim.transform.q;
-            }
-        } else {
-            sim.center0 = sim.center;
-            sim.rotation0 = sim.transform.q;
-            world.bodies[body_id as usize].sleep_time += time_step;
-        }
-
-        let rotation_matrix = make_matrix_from_quat(sim.transform.q);
-        sim.inv_inertia_world = mul_mm(
-            mul_mm(rotation_matrix, sim.inv_inertia_local),
-            transpose(rotation_matrix),
-        );
-
-        world.solver_sets[AWAKE_SET as usize].body_states[sim_index] = state;
-        world.solver_sets[AWAKE_SET as usize].body_sims[sim_index] = sim;
-
-        let sleep_time = world.bodies[body_id as usize].sleep_time;
-        let island_id = world.bodies[body_id as usize].island_id;
-        if island_id != NULL_INDEX {
-            if sleep_time < TIME_TO_SLEEP {
-                let island_index = world.islands[island_id as usize].local_index;
-                world.task_contexts[0]
-                    .awake_island_bit_set
-                    .set_bit(island_index as u32);
-            } else if world.islands[island_id as usize].constraint_remove_count > 0 {
-                let task_context = &mut world.task_contexts[0];
-                if sleep_time > task_context.split_sleep_time
-                    || (sleep_time == task_context.split_sleep_time
-                        && island_id > task_context.split_island_id)
-                {
-                    task_context.split_island_id = island_id;
-                    task_context.split_sleep_time = sleep_time;
-                }
+        // The awake bodies, borrowed in sim order.
+        let mut awake: Vec<Option<&mut Body>> = (0..awake_body_count).map(|_| None).collect();
+        for body in bodies.iter_mut() {
+            if body.set_index == AWAKE_SET && body.id != NULL_INDEX {
+                let local_index = body.local_index as usize;
+                awake[local_index] = Some(body);
             }
         }
 
-        // Update shapes AABBs
-        // For fast non-bullet bodies the AABB has already been updated in b3SolveContinuous
-        // For fast bullet bodies the AABB will be updated at a later stage
-        let sim_now = world.solver_sets[AWAKE_SET as usize].body_sims[sim_index];
-        if (sim_now.flags & body_flags::IS_FAST) == 0 {
-            let transform = sim_now.transform;
-            let mut shape_id = world.bodies[body_id as usize].head_shape_id;
-            while shape_id != NULL_INDEX {
-                let aabb = crate::shape::compute_fat_shape_aabb(
-                    &world.shapes[shape_id as usize],
-                    transform,
-                    speculative,
-                );
-                let shape = &mut world.shapes[shape_id as usize];
-                shape.aabb = aabb;
+        let set = &mut solver_sets[AWAKE_SET as usize];
+        let mut items: Vec<(
+            usize,
+            &mut BodySim,
+            &mut BodyState,
+            &mut BodyMoveEvent,
+            &mut Body,
+        )> = set
+            .body_sims
+            .iter_mut()
+            .zip(set.body_states.iter_mut())
+            .zip(body_move_events.iter_mut())
+            .zip(awake)
+            .enumerate()
+            .map(|(i, (((sim, state), event), body))| {
+                (i, sim, state, event, body.expect("awake body"))
+            })
+            .collect();
 
-                if !aabb_contains(world.fat_aabbs[shape_id as usize], aabb) {
-                    let fat_aabb = aabb_inflate(aabb, shape.aabb_margin);
-                    world.fat_aabbs[shape_id as usize] = fat_aabb;
-
-                    // Mark the hierarchy as moved. (C uses atomic operations here because
-                    // finalize runs on many workers; the port is serial.)
-                    let proxy_key = shape.proxy_key;
-                    world.broad_phase.mark_proxy_moved(proxy_key, fat_aabb);
+        crate::parallel::map_reduce_blocks(
+            pool.as_deref(),
+            &mut items,
+            32,
+            |block| {
+                let mut out = FinalizeOut::default();
+                for (i, sim, state, event, body) in block.iter_mut() {
+                    if !finalize_body_head(*i, sim, state, event, body, &shared, &mut out) {
+                        finalize_body_tail(sim, body, &shared, &mut out);
+                    }
                 }
+                out
+            },
+            FinalizeOut::merge,
+        )
+    };
 
-                shape_id = world.shapes[shape_id as usize].next_shape_id;
-            }
-        }
+    let time_step = context.dt;
+    let mut split = out.split;
+    let mut awake_islands = out.awake_islands;
+    let world_ref: &World = world;
+    let results = crate::parallel::map_items(pool.as_deref(), &out.fast, |&sim_index| {
+        continuous_compute(world_ref, sim_index)
+    });
+    for (result, &sim_index) in results.into_iter().zip(&out.fast) {
+        continuous_apply(world, result, time_step);
+
+        let shared = FinalizeShared {
+            islands: &world.islands,
+            enable_sleep: world.enable_sleep,
+            enable_continuous: world.enable_continuous,
+            time_step,
+            inv_time_step: context.inv_dt,
+            world_id: world.world_id,
+        };
+        let mut tail = FinalizeOut::default();
+        let mut sim = world.solver_sets[AWAKE_SET as usize].body_sims[sim_index as usize];
+        let body = &world.bodies[sim.body_id as usize];
+        finalize_body_tail(&mut sim, body, &shared, &mut tail);
+        world.solver_sets[AWAKE_SET as usize].body_sims[sim_index as usize] = sim;
+        awake_islands.append(&mut tail.awake_islands);
+        split = max_split(split, tail.split);
+    }
+    bullet_bodies.extend_from_slice(&out.bullets);
+
+    // Move the proxies of enlarged shapes. (C marks them with atomics.)
+    for (proxy_key, fat_aabb) in update_shape_aabbs(world) {
+        world.broad_phase.mark_proxy_moved(proxy_key, fat_aabb);
+    }
+
+    let task_context = &mut world.task_contexts[0];
+    for &island_index in &awake_islands {
+        task_context
+            .awake_island_bit_set
+            .set_bit(island_index as u32);
+    }
+    let initial = if task_context.split_island_id == NULL_INDEX {
+        None
+    } else {
+        Some((task_context.split_sleep_time, task_context.split_island_id))
+    };
+    if let Some((sleep_time, island_id)) = max_split(initial, split) {
+        task_context.split_sleep_time = sleep_time;
+        task_context.split_island_id = island_id;
     }
 }

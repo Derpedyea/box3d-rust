@@ -30,7 +30,6 @@ use crate::id::ShapeId;
 use crate::math_functions::{
     aabb_transform, invert_transform, max_int, min_int, to_relative_transform, POS_ZERO,
 };
-use crate::parallel_for::parallel_for;
 use crate::shape::{shape_flags, ShapeGeometry};
 use crate::table::{key_hash, shape_pair_key};
 use crate::types::BodyType;
@@ -76,6 +75,23 @@ impl<'a> PairContext<'a> {
             batch_count: 0,
             check_compounds: false,
         }
+    }
+}
+
+/// Traversal stacks for one task. C declares them uninitialized on each call; the port
+/// zeroes them once per task instead of once per subtree, which cost more than the whole
+/// traversal (thousands of 2-4 KB fills per step).
+struct TraversalStacks {
+    pairs: [IndexPair; TREE_STACK_SIZE],
+    proxy: [i32; TREE_STACK_SIZE],
+}
+
+impl TraversalStacks {
+    fn new() -> Box<TraversalStacks> {
+        Box::new(TraversalStacks {
+            pairs: [IndexPair::default(); TREE_STACK_SIZE],
+            proxy: [0; TREE_STACK_SIZE],
+        })
     }
 }
 
@@ -315,13 +331,13 @@ fn collide_proxy_and_subtree(
     proxy: &TreeNode,
     nodes: &[TreeNode],
     mut pair: i32,
+    stack: &mut [i32; TREE_STACK_SIZE],
     context: &mut PairContext<'_>,
 ) {
     let proxy_mark = proxy.flag_index & MOVED_NODE;
     let boxv = proxy.aabb;
     let shape_id = proxy.shape_index();
 
-    let mut stack = [0i32; TREE_STACK_SIZE];
     let mut stack_count = 0usize;
     stack[stack_count] = pair;
     stack_count += 1;
@@ -360,6 +376,7 @@ fn visit_pair(
     node_b: &TreeNode,
     stack: &mut [IndexPair; TREE_STACK_SIZE],
     stack_count: &mut usize,
+    proxy_stack: &mut [i32; TREE_STACK_SIZE],
     context: &mut PairContext<'_>,
 ) {
     if !test_pair(node_a, node_b) {
@@ -371,9 +388,9 @@ fn visit_pair(
     if leaf_a && leaf_b {
         add_candidate_pair(node_a.shape_index(), node_b.shape_index(), context);
     } else if leaf_a {
-        collide_proxy_and_subtree(node_a, array_b, node_b.left_child(), context);
+        collide_proxy_and_subtree(node_a, array_b, node_b.left_child(), proxy_stack, context);
     } else if leaf_b {
-        collide_proxy_and_subtree(node_b, array_a, node_a.left_child(), context);
+        collide_proxy_and_subtree(node_b, array_a, node_a.left_child(), proxy_stack, context);
     } else if *stack_count < TREE_STACK_SIZE {
         stack[*stack_count] = IndexPair {
             a: node_a.left_child(),
@@ -403,9 +420,13 @@ fn collide_cross_pairs(
     array_b: &[TreeNode],
     subtree_a: &TreeNode,
     subtree_b: &TreeNode,
+    stacks: &mut TraversalStacks,
     context: &mut PairContext<'_>,
 ) {
-    let mut stack = [IndexPair::default(); TREE_STACK_SIZE];
+    let TraversalStacks {
+        pairs: stack,
+        proxy: proxy_stack,
+    } = stacks;
     let mut stack_count = 0usize;
 
     // Seed the stack.
@@ -414,8 +435,9 @@ fn collide_cross_pairs(
         array_b,
         subtree_a,
         subtree_b,
-        &mut stack,
+        stack,
         &mut stack_count,
+        proxy_stack,
         context,
     );
 
@@ -429,8 +451,9 @@ fn collide_cross_pairs(
                     array_b,
                     &array_a[pair.a as usize + i],
                     &array_b[pair.b as usize + j],
-                    &mut stack,
+                    stack,
                     &mut stack_count,
+                    proxy_stack,
                     context,
                 );
             }
@@ -451,6 +474,7 @@ fn self_pairs_task(
     let nodes = &tree.nodes[..];
 
     let mut pair_context = PairContext::new(world, pair_keys);
+    let mut stacks = TraversalStacks::new();
 
     for &node_index in &sibling_indices[start_index..end_index] {
         collide_cross_pairs(
@@ -458,6 +482,7 @@ fn self_pairs_task(
             nodes,
             &nodes[node_index as usize],
             &nodes[node_index as usize + 1],
+            &mut stacks,
             &mut pair_context,
         );
     }
@@ -551,6 +576,7 @@ fn cross_pairs_task(
     let dynamic_nodes = &bp.trees[BodyType::Dynamic as usize].nodes[..];
 
     let mut pair_context = PairContext::new(world, pair_keys);
+    let mut stacks = TraversalStacks::new();
 
     // Static seeds come first, so the two passes are contiguous sub-ranges. The batch is
     // drained between them because only the static pass can meet a compound.
@@ -564,6 +590,7 @@ fn cross_pairs_task(
             static_nodes,
             &seed.a,
             &seed.b,
+            &mut stacks,
             &mut pair_context,
         );
     }
@@ -577,27 +604,21 @@ fn cross_pairs_task(
             kinematic_nodes,
             &seed.a,
             &seed.b,
+            &mut stacks,
             &mut pair_context,
         );
     }
     flush_candidate_pairs(&mut pair_context);
 }
 
-/// Rebuild the collision tree for dynamic and kinematic bodies to keep their query
-/// performance good. (static b3UpdateTreesTask)
-fn update_trees_task(world: &mut World) {
-    world.broad_phase.trees[BodyType::Dynamic as usize].rebuild(false);
-    world.broad_phase.trees[BodyType::Kinematic as usize].rebuild(false);
-}
-
 /// Task that can be done in parallel with the narrow-phase
 /// - rebuild the collision tree for dynamic and kinematic bodies to keep their query
 ///   performance good
 ///
-/// The port is serial, so this runs the task inline, like C's default task system
-/// (b3DefaultAddTaskFcn runs the task and returns NULL). (static b3EnqueueTreeUpdate)
+/// The narrow phase runs it ([`crate::broad_phase::BroadPhase::finish_tree_update`]).
+/// (static b3EnqueueTreeUpdate)
 fn enqueue_tree_update(world: &mut World) {
-    update_trees_task(world);
+    world.broad_phase.tree_rebuild_pending = true;
 }
 
 /// Find new proxy pairs and create contacts in sorted pair-key order.
@@ -626,6 +647,9 @@ pub fn update_broad_phase_pairs(world: &mut World) {
     // Generate pairs by querying the dynamic body tree against itself and against the
     // kinematic and static trees.
     {
+        let pool = world.thread_pool.clone();
+        let worker_count = world.worker_count;
+        let check_compounds = world.compound_shape_count > 0;
         let world_ref: &World = world;
         let bp = &world_ref.broad_phase;
 
@@ -659,39 +683,36 @@ pub fn update_broad_phase_pairs(world: &mut World) {
             world: world_ref,
             seeds: &cross_seeds,
             static_seed_count,
-            check_compounds: world_ref.compound_shape_count > 0,
+            check_compounds,
         };
-        // The serial parallel-for runs every block on worker 0, whose keys are detached
-        // above.
-        let worker_count = world_ref.worker_count;
-        parallel_for(
+        // Blocks emit pair keys, which are sorted below, so blocks may run in any order on
+        // any worker.
+        let pool = pool.as_deref();
+        crate::parallel::for_blocks(
+            pool,
             worker_count,
             cross_move_count as i32,
             1,
-            |start, end, worker_index| {
-                debug_assert!(worker_index == 0);
-                cross_pairs_task(
-                    &cross_context,
-                    start as usize,
-                    end as usize,
-                    &mut worker_keys,
-                );
+            &mut worker_keys,
+            |start, end, keys| {
+                cross_pairs_task(&cross_context, start as usize, end as usize, keys);
             },
         );
 
         // Collide the dynamic body tree against itself.
-        parallel_for(
+        crate::parallel::for_blocks(
+            pool,
             worker_count,
             dynamic_move_count as i32,
             64,
-            |start, end, worker_index| {
-                debug_assert!(worker_index == 0);
+            &mut worker_keys,
+            |start, end, keys| {
                 self_pairs_task(
                     world_ref,
                     &moved_siblings,
                     start as usize,
                     end as usize,
-                    &mut worker_keys,
+                    keys,
                 );
             },
         );

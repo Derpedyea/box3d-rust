@@ -1,10 +1,9 @@
 //! SIMD separating axis test from `convex_manifold.c` (`b3ComputeSeparatingAxis`).
 //!
-//! This is the scalar (`B3_SIMD_NONE`) behavioral reference. The face phase runs
-//! through the width-4 `FloatW` helpers from [`crate::simd_scalar`] exactly as the C
-//! code does even in scalar mode (`b3GetSupportWide` / `b3NegativeTransformFromSoA`),
-//! while the edge phase uses the purely scalar `#if defined( B3_SIMD_NONE )` branch.
-//! The two must stay bit-identical to the wide path for cross platform determinism.
+//! Both phases run through the width-4 `FloatW` helpers from [`crate::simd`], as the C
+//! SIMD builds do (`b3GetSupportWide`, `b3NegativeTransformFromSoA`, and the wide edge
+//! loop). C's `B3_SIMD_NONE` edge loop is a scalar rewrite of the same math; both give
+//! bit-identical results, which cross platform determinism relies on.
 //!
 //! SIMD separating axis test based on an implementation developed by Cairn Overturf.
 //! See his article: <https://cairnc.github.io/posts/improvements-to-the-separating-axis/>
@@ -21,12 +20,14 @@ use crate::hull::{
 };
 use crate::math_functions::{
     aabb_center, aabb_extents, abs, add, dot, length, make_matrix_from_quat, max_float, min_float,
-    mul_add, mul_mv, mul_sv, neg, sub, transpose, Matrix3, Transform, Vec3, VEC3_ZERO,
+    mul_mv, neg, sub, transpose, Matrix3, Transform, Vec3, VEC3_ZERO,
 };
-use crate::simd_scalar::{
-    add_vw, dot_w, embed_index_w, load_vw, min_index_w, min_w, neg_vw, splat_vw, splat_w, store_vw,
-    store_w, sub_w, zero_w, Vec3W,
+use crate::simd::{
+    add_vw, and_w, any_true_w, blend_w, div_w, dot_w, embed_index_w, greater_than_w, lane,
+    less_than_w, load_vw, load_w, max_w, min_index_w, min_w, mul_add_svw, mul_svw, mul_w, neg_vw,
+    neg_w, splat_vw, splat_w, sqrt_w, store_vw, store_w, sub_vw, sub_w, zero_w, Vec3W,
 };
+use std::cell::RefCell;
 
 const HULL_BIT_COUNT: i32 = 7;
 
@@ -278,6 +279,64 @@ const NE: usize = crate::constants::MAX_HULL_EDGES as usize + SIMD_WIDTH;
 const NF: usize = crate::constants::MAX_HULL_FACES as usize + SIMD_WIDTH;
 const NV: usize = crate::constants::MAX_HULL_VERTICES as usize + SIMD_WIDTH;
 
+/// Scratch arrays for one separating axis query. C declares them uninitialized on the stack;
+/// zeroing ~11 KB per query cost more than many queries themselves, so each thread zeroes
+/// one set once and reuses it. Every lane a query reads, it writes first (tail lanes
+/// included), as in C.
+struct SatScratch {
+    dot_a: [f32; NF],
+    dot_b: [f32; NF],
+    edge_indices_a: [i32; NE],
+    edge_indices_b: [i32; crate::constants::MAX_HULL_EDGES as usize],
+    b_fnx: [f32; NF],
+    b_fny: [f32; NF],
+    b_fnz: [f32; NF],
+    b_wx: [f32; NV],
+    b_wy: [f32; NV],
+    b_wz: [f32; NV],
+    a_n0x: [f32; NE],
+    a_n0y: [f32; NE],
+    a_n0z: [f32; NE],
+    a_n1x: [f32; NE],
+    a_n1y: [f32; NE],
+    a_n1z: [f32; NE],
+    a_dx: [f32; NE],
+    a_dy: [f32; NE],
+    a_dz: [f32; NE],
+    a_v0x: [f32; NE],
+    a_v0y: [f32; NE],
+    a_v0z: [f32; NE],
+    a_tol: [f32; NE],
+}
+
+thread_local! {
+    static SAT_SCRATCH: RefCell<Box<SatScratch>> = RefCell::new(Box::new(SatScratch {
+        dot_a: [0.0; NF],
+        dot_b: [0.0; NF],
+        edge_indices_a: [0; NE],
+        edge_indices_b: [0; crate::constants::MAX_HULL_EDGES as usize],
+        b_fnx: [0.0; NF],
+        b_fny: [0.0; NF],
+        b_fnz: [0.0; NF],
+        b_wx: [0.0; NV],
+        b_wy: [0.0; NV],
+        b_wz: [0.0; NV],
+        a_n0x: [0.0; NE],
+        a_n0y: [0.0; NE],
+        a_n0z: [0.0; NE],
+        a_n1x: [0.0; NE],
+        a_n1y: [0.0; NE],
+        a_n1z: [0.0; NE],
+        a_dx: [0.0; NE],
+        a_dy: [0.0; NE],
+        a_dz: [0.0; NE],
+        a_v0x: [0.0; NE],
+        a_v0y: [0.0; NE],
+        a_v0z: [0.0; NE],
+        a_tol: [0.0; NE],
+    }));
+}
+
 /// SIMD separating axis test based on an implementation developed by Cairn Overturf.
 /// (b3ComputeSeparatingAxis)
 pub(crate) fn compute_separating_axis(
@@ -286,6 +345,44 @@ pub(crate) fn compute_separating_axis(
     xf_b: Transform,
     early_return: bool,
 ) -> AxisQuery {
+    SAT_SCRATCH.with_borrow_mut(|scratch| {
+        compute_separating_axis_in(scratch, hull_a, hull_b, xf_b, early_return)
+    })
+}
+
+fn compute_separating_axis_in(
+    scratch: &mut SatScratch,
+    hull_a: &HullData,
+    hull_b: &HullData,
+    xf_b: Transform,
+    early_return: bool,
+) -> AxisQuery {
+    let SatScratch {
+        dot_a,
+        dot_b,
+        edge_indices_a,
+        edge_indices_b,
+        b_fnx,
+        b_fny,
+        b_fnz,
+        b_wx,
+        b_wy,
+        b_wz,
+        a_n0x,
+        a_n0y,
+        a_n0z,
+        a_n1x,
+        a_n1y,
+        a_n1z,
+        a_dx,
+        a_dy,
+        a_dz,
+        a_v0x,
+        a_v0y,
+        a_v0z,
+        a_tol,
+    } = scratch;
+
     let r = make_matrix_from_quat(xf_b.q);
     let inv_r = transpose(r);
 
@@ -344,8 +441,7 @@ pub(crate) fn compute_separating_axis(
     let radius_bound = radius - (linear_slop() + 0.001 * (center_distance + radius));
 
     // Compute dot(normalA, centerDelta) for all face normals of hullA.
-    let mut dot_a = [0.0f32; NF];
-    get_face_dots(hull_a, delta_center, &mut dot_a);
+    get_face_dots(hull_a, delta_center, &mut dot_a[..]);
 
     // Find the face of hullA that most aligns with centerDelta.
     let mut seed_index_a = 0usize;
@@ -423,8 +519,7 @@ pub(crate) fn compute_separating_axis(
     let h_a = aabb_extents(hull_a.aabb);
 
     // Similarly, find the face of hullB that most aligns with the vector pointing from centerB to centerA.
-    let mut dot_b = [0.0f32; NF];
-    get_face_dots(hull_b, neg(mul_mv(inv_r, delta_center)), &mut dot_b);
+    get_face_dots(hull_b, neg(mul_mv(inv_r, delta_center)), &mut dot_b[..]);
 
     let mut seed_index_b = 0usize;
     let mut max_dot_b = dot_b[0];
@@ -515,7 +610,6 @@ pub(crate) fn compute_separating_axis(
     // Gather edges of A that can feasibly create a separating axis that beats the maximum face separation.
     let half_edge_count_a = hull_a.edge_count;
     let half_edges_a = get_hull_edges(hull_a);
-    let mut edge_indices_a = [0i32; NE];
     let mut na = 0usize;
     let mut i = 0;
     while i < half_edge_count_a {
@@ -530,7 +624,6 @@ pub(crate) fn compute_separating_axis(
     // Similar for edges of B.
     let half_edge_count_b = hull_b.edge_count;
     let half_edges_b = get_hull_edges(hull_b);
-    let mut edge_indices_b = [0i32; crate::constants::MAX_HULL_EDGES as usize];
     let mut nb = 0usize;
     let mut i = 0;
     while i < half_edge_count_b {
@@ -550,14 +643,8 @@ pub(crate) fn compute_separating_axis(
     // The alignments below are not necessary, but they don't hurt.
 
     // B face normals in A space, negated.
-    let mut b_fnx = [0.0f32; NF];
-    let mut b_fny = [0.0f32; NF];
-    let mut b_fnz = [0.0f32; NF];
 
     // B vertices in A space, negated.
-    let mut b_wx = [0.0f32; NV];
-    let mut b_wy = [0.0f32; NV];
-    let mut b_wz = [0.0f32; NV];
 
     let soa_face_count_b = hull_soa_normal_count(hull_b);
     let normals_b = get_hull_soa_normals(hull_b);
@@ -572,9 +659,9 @@ pub(crate) fn compute_separating_axis(
         ny_b,
         nz_b,
         soa_face_count_b,
-        &mut b_fnx,
-        &mut b_fny,
-        &mut b_fnz,
+        &mut b_fnx[..],
+        &mut b_fny[..],
+        &mut b_fnz[..],
         false,
     );
     negative_transform_from_soa(
@@ -584,29 +671,16 @@ pub(crate) fn compute_separating_axis(
         vy_b,
         vz_b,
         soa_vertex_count_b,
-        &mut b_wx,
-        &mut b_wy,
-        &mut b_wz,
+        &mut b_wx[..],
+        &mut b_wy[..],
+        &mut b_wz[..],
         true,
     );
 
     // Per A edge data, already in A's space so just gathered. n0 and n1 are the two face
     // normals, d the edge vector av1-av0, v0 the first vertex. Tol is the
     // parallel edge tolerance, scaled by the edge length.
-    let mut a_n0x = [0.0f32; NE];
-    let mut a_n0y = [0.0f32; NE];
-    let mut a_n0z = [0.0f32; NE];
-    let mut a_n1x = [0.0f32; NE];
-    let mut a_n1y = [0.0f32; NE];
-    let mut a_n1z = [0.0f32; NE];
     // dir = av1 - av0
-    let mut a_dx = [0.0f32; NE];
-    let mut a_dy = [0.0f32; NE];
-    let mut a_dz = [0.0f32; NE];
-    let mut a_v0x = [0.0f32; NE];
-    let mut a_v0y = [0.0f32; NE];
-    let mut a_v0z = [0.0f32; NE];
-    let mut a_tol = [0.0f32; NE];
 
     let squared_tol = PARALLEL_EDGE_TOL * PARALLEL_EDGE_TOL;
     for k in 0..na {
@@ -650,11 +724,9 @@ pub(crate) fn compute_separating_axis(
 
     let slop = linear_slop();
 
-    // The SIMD emulated version of this code is very slow. This is a purely scalar version
-    // for platforms that don't have SIMD capability. It is much faster than SIMD emulation.
-    // WARNING: this math needs to match the SIMD version for cross platform determinism.
-
-    let eps = -slop * slop;
+    // This tolerance can skip edges shorter than 1cm.
+    let eps = splat_w(-slop * slop);
+    let inf = splat_w(f32::INFINITY);
 
     for j in 0..nb {
         let edge = &half_edges_b[edge_indices_b[j] as usize];
@@ -664,95 +736,118 @@ pub(crate) fn compute_separating_axis(
         let v0 = edge.origin as usize;
         let v1 = twin.origin as usize;
 
-        let c = Vec3 {
+        let n_c = Vec3 {
             x: b_fnx[f0],
             y: b_fny[f0],
             z: b_fnz[f0],
         };
-        let d_n = Vec3 {
+        let n_d = Vec3 {
             x: b_fnx[f1],
             y: b_fny[f1],
             z: b_fnz[f1],
         };
-        let bv0 = Vec3 {
+        let p_b = Vec3 {
             x: b_wx[v0],
             y: b_wy[v0],
             z: b_wz[v0],
         };
-        let bv1 = Vec3 {
+        let q_b = Vec3 {
             x: b_wx[v1],
             y: b_wy[v1],
             z: b_wz[v1],
         };
-        let dc = sub(bv1, bv0);
 
-        for i in 0..na {
-            let d = Vec3 {
-                x: a_dx[i],
-                y: a_dy[i],
-                z: a_dz[i],
-            };
+        let c = splat_vw(n_c);
+        let d_n = splat_vw(n_d);
+        let dc = splat_vw(sub(q_b, p_b));
+        let bv0 = splat_vw(p_b);
+
+        let mut i = 0;
+        while i < na {
+            let n0 = load_vw(&a_n0x[i..], &a_n0y[i..], &a_n0z[i..]);
+            let n1 = load_vw(&a_n1x[i..], &a_n1y[i..], &a_n1z[i..]);
+            let d = load_vw(&a_dx[i..], &a_dy[i..], &a_dz[i..]);
+            let av0 = load_vw(&a_v0x[i..], &a_v0y[i..], &a_v0z[i..]);
+
+            let tol = load_w(&a_tol[i..]);
 
             // CBA = C.dir, DBA = D.dir, where dir = B_x_A
-            let cba = dot(c, d);
-            let dba = dot(d_n, d);
-            if cba * dba >= eps {
-                continue;
-            }
-
-            let n0 = Vec3 {
-                x: a_n0x[i],
-                y: a_n0y[i],
-                z: a_n0z[i],
-            };
-            let n1 = Vec3 {
-                x: a_n1x[i],
-                y: a_n1y[i],
-                z: a_n1z[i],
-            };
-
+            let cba = dot_w(c, d);
+            let dba = dot_w(d_n, d);
             // ADC = n0.DC, BDC = n1.DC, where DC = D_x_C
-            let adc = dot(n0, dc);
-            let bdc = dot(n1, dc);
-            if adc * bdc >= eps || cba * bdc >= eps {
-                continue;
-            }
+            let adc = dot_w(n0, dc);
+            let bdc = dot_w(n1, dc);
 
-            // Reject near parallel edges
-            let max_cd = max_float(cba * cba, dba * dba);
-            if max_cd <= a_tol[i] {
+            // Gauss map arc crossing test, CBA*DBA<eps and ADC*BDC<eps and CBA*BDC<eps
+            let m1 = less_than_w(mul_w(cba, dba), eps);
+            let m2 = less_than_w(mul_w(adc, bdc), eps);
+            let m3 = less_than_w(mul_w(cba, bdc), eps);
+
+            // Reject near parallel edges. The arc lerp is ill conditioned when both of B's
+            // normals are nearly perpendicular to edge A, a scale invariant sine threshold
+            // relative to the edge length.
+            let max_cd = max_w(mul_w(cba, cba), mul_w(dba, dba));
+            let not_parallel = greater_than_w(max_cd, tol);
+            let mask = and_w(and_w(m1, m2), and_w(m3, not_parallel));
+
+            // Most A-edges fail the Gauss test, so skip the divide, sqrt and support work
+            // when no lane passed.
+            if !any_true_w(mask) {
+                i += SIMD_WIDTH;
                 continue;
             }
 
             // t = -CBA / (DBA - CBA)
-            let t = -cba / (dba - cba);
+            let t = div_w(neg_w(cba), sub_w(dba, cba));
 
             // normal = lerp(t, C, D) = C + (D-C)*t
-            let mut n = mul_add(c, t, sub(d_n, c));
-            let len2 = dot(n, n);
-            let inv = 1.0 / len2.sqrt();
-            n = mul_sv(inv, n);
+            let mut n = mul_add_svw(c, t, sub_vw(d_n, c));
 
-            // separation = -dot(normal, av0 + bv0)
-            let av0 = Vec3 {
-                x: a_v0x[i],
-                y: a_v0y[i],
-                z: a_v0z[i],
-            };
-            let separation = -dot(add(av0, bv0), n);
-            if separation > res.edge.separation {
-                res.edge.normal = n;
-                res.edge.separation = separation;
+            // normalize
+            let len2 = dot_w(n, n);
+            let inv = div_w(splat_w(1.0), sqrt_w(len2));
+            n = mul_svw(inv, n);
 
-                // Half edge index
-                res.edge.index_a = edge_indices_a[i];
-                res.edge.index_b = edge_indices_b[j];
+            // support = dot(normal, av0 + bv0)
+            let mut support = dot_w(add_vw(av0, bv0), n);
 
-                if separation > speculative && early_return {
-                    res.separated_feature = SeparatingFeature::EdgePairAxis;
-                    return res;
+            // Lanes that fail the Gauss test can never win.
+            support = blend_w(inf, support, mask);
+            let separation = neg_w(support);
+
+            // Test all supports against the running best at once. If none beats it, skip
+            // the scalar reduction.
+            let improves = greater_than_w(separation, splat_w(res.edge.separation));
+            if !any_true_w(improves) {
+                i += SIMD_WIDTH;
+                continue;
+            }
+
+            // Reduce in lane order so ties keep the first edge and the early out takes the
+            // first improving support below zero. Padded tail lanes carry +INF support, so
+            // they never update or index edges out of range.
+            for l in 0..SIMD_WIDTH {
+                let ei = i + l;
+                let sep = lane(separation, l);
+                if sep > res.edge.separation {
+                    res.edge.normal = Vec3 {
+                        x: lane(n.x, l),
+                        y: lane(n.y, l),
+                        z: lane(n.z, l),
+                    };
+                    res.edge.separation = sep;
+
+                    // Half edge index
+                    res.edge.index_a = edge_indices_a[ei];
+                    res.edge.index_b = edge_indices_b[j];
+
+                    if sep > speculative && early_return {
+                        res.separated_feature = SeparatingFeature::EdgePairAxis;
+                        return res;
+                    }
                 }
             }
+            i += SIMD_WIDTH;
         }
     }
 

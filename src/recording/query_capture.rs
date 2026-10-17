@@ -236,7 +236,7 @@ pub fn commit(world: &World, writer: QueryWriter, opcode: RecOp) {
     let Some(rec) = world.recording.as_deref() else {
         return;
     };
-    // Queries take `&World`; the borrow is held only for this append, never
+    // Queries take `&World`; the lock is held only for this append, never
     // across user callbacks, so it cannot conflict.
-    writer.commit(&mut rec.borrow_mut(), opcode);
+    writer.commit(&mut rec.lock().unwrap_or_else(|e| e.into_inner()), opcode);
 }

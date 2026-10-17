@@ -23,7 +23,7 @@ use crate::solver::Softness;
 pub use prepare::prepare_mesh_contacts;
 pub use restitution::apply_restitution;
 pub use solve::{push_contacts, solve_contacts};
-pub use store::{flag_hit_events, store_impulses};
+pub use store::store_impulses;
 pub use warm_start::warm_start_contacts;
 
 /// (b3ManifoldConstraintPoint)

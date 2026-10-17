@@ -11,6 +11,8 @@
 mod continuous;
 mod integrate;
 mod solve;
+mod stages;
+pub mod states;
 
 use crate::math_functions::PI;
 

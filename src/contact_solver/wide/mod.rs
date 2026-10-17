@@ -2,7 +2,7 @@
 //! (B3_SIMD_NONE).
 //!
 //! Graph-color convex contacts are packed four at a time into a [`ContactConstraintWide`] and
-//! solved with the `b3FloatW` emulation from [`crate::simd_scalar`], so every lane runs exactly
+//! solved with the `b3FloatW` emulation from [`crate::simd`], so every lane runs exactly
 //! the arithmetic of C's scalar wide path, including the decisions C makes for the whole wide
 //! constraint (the wide point count, rolling resistance, restitution).
 //!
@@ -22,11 +22,12 @@ pub use store::store_impulses_convex;
 use crate::body::{body_flags, BodyState, IDENTITY_BODY_STATE};
 use crate::constants::MAX_MANIFOLD_POINTS;
 use crate::core::{NULL_INDEX, SIMD_WIDTH};
+use crate::solver::states::SolverStates;
 // The wide vec3 type and its helpers live in `simd.h` upstream (moved there from
-// contact_solver.c in 9f998c8), so they are imported from `crate::simd_scalar`.
-use crate::simd_scalar::{
-    abs_w, add_w, blend_w, cross_w, div_w, dot_w, greater_than_w, less_than_w, mul_svw, mul_w,
-    neg_w, or_w, set_w, splat_w, sqrt_w, sub_w, zero_w, FloatW, Vec3W,
+// contact_solver.c in 9f998c8), so they are imported from `crate::simd`.
+use crate::simd::{
+    abs_w, add_w, blend_w, cross_w, div_w, dot_w, greater_than_w, lane, less_than_w, mul_svw,
+    mul_w, neg_w, or_w, splat_w, sqrt_w, sub_w, zero_w, FloatW, Vec3W,
 };
 
 /// Wide vec2. (b3Vec2W)
@@ -71,24 +72,9 @@ pub struct Matrix3W {
 }
 
 pub const VEC3W_ZERO: Vec3W = Vec3W {
-    x: FloatW {
-        x: 0.0,
-        y: 0.0,
-        z: 0.0,
-        w: 0.0,
-    },
-    y: FloatW {
-        x: 0.0,
-        y: 0.0,
-        z: 0.0,
-        w: 0.0,
-    },
-    z: FloatW {
-        x: 0.0,
-        y: 0.0,
-        z: 0.0,
-        w: 0.0,
-    },
+    x: FloatW::ZERO,
+    y: FloatW::ZERO,
+    z: FloatW::ZERO,
 };
 
 pub const SYM3W_ZERO: SymMatrix3W = SymMatrix3W {
@@ -365,133 +351,96 @@ pub fn perp_w(a: Vec3W) -> Vec3W {
     mul_svw(s, p)
 }
 
-/// Lane `i` of a wide float.
+/// The four 16-byte rows of a body state.
 #[inline]
-pub fn lane(a: FloatW, i: usize) -> f32 {
-    match i {
-        0 => a.x,
-        1 => a.y,
-        2 => a.z,
-        _ => a.w,
-    }
+fn state_rows(s: &BodyState) -> [FloatW; 4] {
+    [
+        FloatW::new([
+            s.linear_velocity.x,
+            s.linear_velocity.y,
+            s.linear_velocity.z,
+            s.padding1,
+        ]),
+        FloatW::new([
+            s.angular_velocity.x,
+            s.angular_velocity.y,
+            s.angular_velocity.z,
+            s.padding2,
+        ]),
+        FloatW::new([
+            s.delta_position.x,
+            s.delta_position.y,
+            s.delta_position.z,
+            f32::from_bits(s.flags),
+        ]),
+        FloatW::new([
+            s.delta_rotation.v.x,
+            s.delta_rotation.v.y,
+            s.delta_rotation.v.z,
+            s.delta_rotation.s,
+        ]),
+    ]
 }
 
-/// (b3GatherBodies, scalar path) Indices are base 1 with 0 for null.
-pub fn gather_bodies(states: &[BodyState], indices: &[i32; SIMD_WIDTH]) -> BodyStateW {
-    let identity = IDENTITY_BODY_STATE;
-    let s: [BodyState; SIMD_WIDTH] = core::array::from_fn(|i| {
+/// Indices are base 1 with 0 for null. (b3GatherBodies)
+#[inline]
+pub fn gather_bodies(states: &SolverStates, indices: &[i32; SIMD_WIDTH]) -> BodyStateW {
+    let rows: [[FloatW; 4]; SIMD_WIDTH] = core::array::from_fn(|i| {
         if indices[i] == 0 {
-            identity
+            state_rows(&IDENTITY_BODY_STATE)
         } else {
-            states[(indices[i] - 1) as usize]
+            states.rows((indices[i] - 1) as usize)
         }
     });
 
+    let [vx, vy, vz, _] = FloatW::transpose([rows[0][0], rows[1][0], rows[2][0], rows[3][0]]);
+    let [wx, wy, wz, _] = FloatW::transpose([rows[0][1], rows[1][1], rows[2][1], rows[3][1]]);
+    let [px, py, pz, _] = FloatW::transpose([rows[0][2], rows[1][2], rows[2][2], rows[3][2]]);
+    let [qx, qy, qz, qs] = FloatW::transpose([rows[0][3], rows[1][3], rows[2][3], rows[3][3]]);
+
     BodyStateW {
         v: Vec3W {
-            x: set_w(
-                s[0].linear_velocity.x,
-                s[1].linear_velocity.x,
-                s[2].linear_velocity.x,
-                s[3].linear_velocity.x,
-            ),
-            y: set_w(
-                s[0].linear_velocity.y,
-                s[1].linear_velocity.y,
-                s[2].linear_velocity.y,
-                s[3].linear_velocity.y,
-            ),
-            z: set_w(
-                s[0].linear_velocity.z,
-                s[1].linear_velocity.z,
-                s[2].linear_velocity.z,
-                s[3].linear_velocity.z,
-            ),
+            x: vx,
+            y: vy,
+            z: vz,
         },
         w: Vec3W {
-            x: set_w(
-                s[0].angular_velocity.x,
-                s[1].angular_velocity.x,
-                s[2].angular_velocity.x,
-                s[3].angular_velocity.x,
-            ),
-            y: set_w(
-                s[0].angular_velocity.y,
-                s[1].angular_velocity.y,
-                s[2].angular_velocity.y,
-                s[3].angular_velocity.y,
-            ),
-            z: set_w(
-                s[0].angular_velocity.z,
-                s[1].angular_velocity.z,
-                s[2].angular_velocity.z,
-                s[3].angular_velocity.z,
-            ),
+            x: wx,
+            y: wy,
+            z: wz,
         },
         dp: Vec3W {
-            x: set_w(
-                s[0].delta_position.x,
-                s[1].delta_position.x,
-                s[2].delta_position.x,
-                s[3].delta_position.x,
-            ),
-            y: set_w(
-                s[0].delta_position.y,
-                s[1].delta_position.y,
-                s[2].delta_position.y,
-                s[3].delta_position.y,
-            ),
-            z: set_w(
-                s[0].delta_position.z,
-                s[1].delta_position.z,
-                s[2].delta_position.z,
-                s[3].delta_position.z,
-            ),
+            x: px,
+            y: py,
+            z: pz,
         },
         dq: QuatW {
             v: Vec3W {
-                x: set_w(
-                    s[0].delta_rotation.v.x,
-                    s[1].delta_rotation.v.x,
-                    s[2].delta_rotation.v.x,
-                    s[3].delta_rotation.v.x,
-                ),
-                y: set_w(
-                    s[0].delta_rotation.v.y,
-                    s[1].delta_rotation.v.y,
-                    s[2].delta_rotation.v.y,
-                    s[3].delta_rotation.v.y,
-                ),
-                z: set_w(
-                    s[0].delta_rotation.v.z,
-                    s[1].delta_rotation.v.z,
-                    s[2].delta_rotation.v.z,
-                    s[3].delta_rotation.v.z,
-                ),
+                x: qx,
+                y: qy,
+                z: qz,
             },
-            s: set_w(
-                s[0].delta_rotation.s,
-                s[1].delta_rotation.s,
-                s[2].delta_rotation.s,
-                s[3].delta_rotation.s,
-            ),
+            s: qs,
         },
     }
 }
 
-/// This writes only the velocities back to the solver bodies. (b3ScatterBodies, scalar path)
-pub fn scatter_bodies(states: &mut [BodyState], indices: &[i32; SIMD_WIDTH], body: &BodyStateW) {
+/// This writes only the velocities back to the solver bodies. (b3ScatterBodies)
+#[inline]
+pub fn scatter_bodies(states: &SolverStates, indices: &[i32; SIMD_WIDTH], body: &BodyStateW) {
+    let zero = FloatW::ZERO;
+    let v = FloatW::transpose([body.v.x, body.v.y, body.v.z, zero]);
+    let w = FloatW::transpose([body.w.x, body.w.y, body.w.z, zero]);
     for (i, &index) in indices.iter().enumerate() {
-        let index = index - 1;
-        if index != -1 && (states[index as usize].flags & body_flags::DYNAMIC_FLAG) != 0 {
-            let state = &mut states[index as usize];
-            state.linear_velocity.x = lane(body.v.x, i);
-            state.linear_velocity.y = lane(body.v.y, i);
-            state.linear_velocity.z = lane(body.v.z, i);
-            state.angular_velocity.x = lane(body.w.x, i);
-            state.angular_velocity.y = lane(body.w.y, i);
-            state.angular_velocity.z = lane(body.w.z, i);
+        // Indices are 0 for null
+        if index == 0 {
+            continue;
         }
+        let index = (index - 1) as usize;
+        if (states.flags(index) & body_flags::DYNAMIC_FLAG) == 0 {
+            continue;
+        }
+        states.set_velocity_rows(index, v[i], w[i]);
     }
 }
 

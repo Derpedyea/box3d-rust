@@ -288,14 +288,18 @@ pub fn start_recording(world: &mut World, mut recording: Recording) {
     let hash = hash_world_state(world);
     recording.write_state_hash(wid, hash);
 
-    world.recording = Some(Box::new(std::cell::RefCell::new(recording)));
+    world.recording = Some(Box::new(std::sync::Mutex::new(recording)));
 }
 
 /// Stop recording, finalize the buffer, and return the recording to the
 /// caller. Returns `None` if no session was active.
 /// (b3StopRecordingInternal / b3World_StopRecording)
 pub fn stop_recording(world: &mut World) -> Option<Recording> {
-    let mut rec = world.recording.take()?.into_inner();
+    let mut rec = world
+        .recording
+        .take()?
+        .into_inner()
+        .unwrap_or_else(|e| e.into_inner());
 
     let bounds = if rec.have_bounds {
         rec.accumulated_bounds
@@ -324,6 +328,6 @@ pub fn stop_recording(world: &mut World) -> Option<Recording> {
 #[inline]
 pub fn with_recording(world: &mut World, f: impl FnOnce(&mut Recording)) {
     if let Some(rec) = world.recording.as_deref_mut() {
-        f(rec.get_mut())
+        f(rec.get_mut().unwrap_or_else(|e| e.into_inner()))
     }
 }

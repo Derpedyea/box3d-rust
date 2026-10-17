@@ -4,7 +4,7 @@
 // SPDX-License-Identifier: MIT
 
 use super::{JointSim, JointType};
-use crate::body::{body_flags, BodyState, IDENTITY_BODY_STATE};
+use crate::body::{body_flags, IDENTITY_BODY_STATE};
 use crate::core::NULL_INDEX;
 use crate::math_functions::{
     add, add2, add_mm, atan2, blend2, blend3, clamp_float, cross, det, dot, dot_quat, inv_mul_quat,
@@ -12,6 +12,7 @@ use crate::math_functions::{
     negate_quat, rotate_vector, solve2, sub, sub2, sub_pos, Mat2, Transform, Vec2, VEC2_ZERO,
     VEC3_AXIS_X, VEC3_AXIS_Y,
 };
+use crate::solver::states::SolverStates;
 use crate::solver::{make_soft, StepContext};
 use crate::solver_set::AWAKE_SET;
 use crate::world::World;
@@ -155,7 +156,7 @@ pub fn prepare_wheel_joint(world: &World, base: &mut JointSim, context: &StepCon
 }
 
 /// (b3WarmStartWheelJoint)
-pub fn warm_start_wheel_joint(base: &mut JointSim, states: &mut [BodyState]) {
+pub fn warm_start_wheel_joint(base: &mut JointSim, states: &SolverStates) {
     debug_assert!(base.type_ == JointType::Wheel);
 
     let m_a = base.inv_mass_a;
@@ -168,12 +169,12 @@ pub fn warm_start_wheel_joint(base: &mut JointSim, states: &mut [BodyState]) {
     let mut state_a = if joint.index_a == NULL_INDEX {
         IDENTITY_BODY_STATE
     } else {
-        states[joint.index_a as usize]
+        states.get(joint.index_a as usize)
     };
     let mut state_b = if joint.index_b == NULL_INDEX {
         IDENTITY_BODY_STATE
     } else {
-        states[joint.index_b as usize]
+        states.get(joint.index_b as usize)
     };
 
     let r_a = rotate_vector(state_a.delta_rotation, joint.frame_a.p);
@@ -300,7 +301,7 @@ pub fn warm_start_wheel_joint(base: &mut JointSim, states: &mut [BodyState]) {
             state_a.angular_velocity,
             mul_mv(i_a, add(angular_impulse_a, angular_impulse)),
         );
-        states[joint.index_a as usize] = state_a;
+        states.set(joint.index_a as usize, state_a);
     }
 
     if state_b.flags & body_flags::DYNAMIC_FLAG != 0 {
@@ -309,7 +310,7 @@ pub fn warm_start_wheel_joint(base: &mut JointSim, states: &mut [BodyState]) {
             state_b.angular_velocity,
             mul_mv(i_b, add(angular_impulse_b, angular_impulse)),
         );
-        states[joint.index_b as usize] = state_b;
+        states.set(joint.index_b as usize, state_b);
     }
 }
 
@@ -317,7 +318,7 @@ pub fn warm_start_wheel_joint(base: &mut JointSim, states: &mut [BodyState]) {
 pub fn solve_wheel_joint(
     base: &mut JointSim,
     context: &StepContext,
-    states: &mut [BodyState],
+    states: &SolverStates,
     use_bias: bool,
 ) {
     debug_assert!(base.type_ == JointType::Wheel);
@@ -334,12 +335,12 @@ pub fn solve_wheel_joint(
     let mut state_a = if joint.index_a == NULL_INDEX {
         IDENTITY_BODY_STATE
     } else {
-        states[joint.index_a as usize]
+        states.get(joint.index_a as usize)
     };
     let mut state_b = if joint.index_b == NULL_INDEX {
         IDENTITY_BODY_STATE
     } else {
-        states[joint.index_b as usize]
+        states.get(joint.index_b as usize)
     };
 
     let mut v_a = state_a.linear_velocity;
@@ -745,12 +746,12 @@ pub fn solve_wheel_joint(
     if state_a.flags & body_flags::DYNAMIC_FLAG != 0 {
         state_a.linear_velocity = v_a;
         state_a.angular_velocity = w_a;
-        states[joint.index_a as usize] = state_a;
+        states.set(joint.index_a as usize, state_a);
     }
 
     if state_b.flags & body_flags::DYNAMIC_FLAG != 0 {
         state_b.linear_velocity = v_b;
         state_b.angular_velocity = w_b;
-        states[joint.index_b as usize] = state_b;
+        states.set(joint.index_b as usize, state_b);
     }
 }

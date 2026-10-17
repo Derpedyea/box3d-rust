@@ -4,17 +4,18 @@
 //! SPDX-License-Identifier: MIT
 
 use super::ContactConstraint;
-use crate::body::{body_flags, BodyState, IDENTITY_BODY_STATE};
+use crate::body::{body_flags, IDENTITY_BODY_STATE};
 use crate::core::NULL_INDEX;
 use crate::math_functions::{
     add, cross, dot, max_float, min_float, mul_add, mul_mv, mul_sub, mul_sv, rotate_vector, sub,
 };
+use crate::solver::states::SolverStates;
 use crate::solver::StepContext;
 
 /// Poisson kinetic restitution. (b3ApplyRestitution_Mesh)
 pub fn apply_restitution(
     constraints: &mut [ContactConstraint],
-    states: &mut [BodyState],
+    states: &SolverStates,
     context: &StepContext,
     restitution_threshold: f32,
     propagate: bool,
@@ -41,7 +42,7 @@ pub fn apply_restitution(
         let mut state_a = if index_a == NULL_INDEX {
             IDENTITY_BODY_STATE
         } else {
-            states[index_a as usize]
+            states.get(index_a as usize)
         };
         let mut v_a = state_a.linear_velocity;
         let mut w_a = state_a.angular_velocity;
@@ -50,7 +51,7 @@ pub fn apply_restitution(
         let mut state_b = if index_b == NULL_INDEX {
             IDENTITY_BODY_STATE
         } else {
-            states[index_b as usize]
+            states.get(index_b as usize)
         };
         let mut v_b = state_b.linear_velocity;
         let mut w_b = state_b.angular_velocity;
@@ -126,13 +127,13 @@ pub fn apply_restitution(
         if (state_a.flags & body_flags::DYNAMIC_FLAG) != 0 {
             state_a.linear_velocity = v_a;
             state_a.angular_velocity = w_a;
-            states[index_a as usize] = state_a;
+            states.set(index_a as usize, state_a);
         }
 
         if (state_b.flags & body_flags::DYNAMIC_FLAG) != 0 {
             state_b.linear_velocity = v_b;
             state_b.angular_velocity = w_b;
-            states[index_b as usize] = state_b;
+            states.set(index_b as usize, state_b);
         }
     }
 }

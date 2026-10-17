@@ -132,12 +132,18 @@ pub fn ser_body_state(buf: &mut RecBuffer, s: &BodyState) {
 }
 
 pub fn des_body_state(r: &mut SnapReader<'_>) -> BodyState {
+    let linear_velocity = r.vec3();
+    let angular_velocity = r.vec3();
+    let delta_position = r.vec3();
+    let delta_rotation = r.quat();
+    let flags = r.u32();
     BodyState {
-        linear_velocity: r.vec3(),
-        angular_velocity: r.vec3(),
-        delta_position: r.vec3(),
-        delta_rotation: r.quat(),
-        flags: r.u32(),
+        linear_velocity,
+        angular_velocity,
+        delta_position,
+        delta_rotation,
+        flags,
+        ..BodyState::default()
     }
 }
 

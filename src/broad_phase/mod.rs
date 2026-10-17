@@ -51,9 +51,22 @@ pub struct BroadPhase {
     /// Tracks shape pairs that have a Contact.
     // todo pairSet can grow quite large on the first time step and remain large
     pub pair_set: HashSet,
+
+    /// The dynamic and kinematic trees await a rebuild. Pair finding queues it; it runs
+    /// alongside the narrow phase and finishes before bodies finalize. (world->userTreeTask)
+    pub(crate) tree_rebuild_pending: bool,
 }
 
 impl BroadPhase {
+    /// Rebuild the dynamic and kinematic trees if pair finding queued it. (b3UpdateTreesTask)
+    pub(crate) fn finish_tree_update(&mut self) {
+        if self.tree_rebuild_pending {
+            self.trees[BodyType::Dynamic as usize].rebuild(false);
+            self.trees[BodyType::Kinematic as usize].rebuild(false);
+            self.tree_rebuild_pending = false;
+        }
+    }
+
     /// (b3CreateBroadPhase)
     pub fn new(capacity: &Capacity) -> BroadPhase {
         debug_assert!(BODY_TYPE_COUNT == 3);
@@ -72,6 +85,7 @@ impl BroadPhase {
             ],
             moved_siblings: Vec::new(),
             pair_set,
+            tree_rebuild_pending: false,
         }
     }
 
@@ -90,6 +104,7 @@ impl BroadPhase {
             ],
             moved_siblings: Vec::new(),
             pair_set: HashSet::default(),
+            tree_rebuild_pending: false,
         };
     }
 
