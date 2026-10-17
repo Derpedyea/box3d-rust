@@ -35,17 +35,17 @@ pub fn push_contacts(
         let i_b = contact_constraint.inv_i_b;
 
         // This is a dummy state to represent a static body because static bodies have no solver body.
-        let mut state_a = states.get_or_identity(index_a);
-        let mut v_a = state_a.linear_velocity;
-        let mut w_a = state_a.angular_velocity;
-        let dq_a = state_a.delta_rotation;
+        let state_a = states.at_or_identity(index_a);
+        let mut v_a = state_a.linear_velocity();
+        let mut w_a = state_a.angular_velocity();
+        let dq_a = state_a.delta_rotation();
 
-        let mut state_b = states.get_or_identity(index_b);
-        let mut v_b = state_b.linear_velocity;
-        let mut w_b = state_b.angular_velocity;
-        let dq_b = state_b.delta_rotation;
+        let state_b = states.at_or_identity(index_b);
+        let mut v_b = state_b.linear_velocity();
+        let mut w_b = state_b.angular_velocity();
+        let dq_b = state_b.delta_rotation();
 
-        let dp = sub(state_b.delta_position, state_a.delta_position);
+        let dp = sub(state_b.delta_position(), state_a.delta_position());
         let softness = contact_constraint.softness;
 
         for j in 0..manifold_count as usize {
@@ -106,16 +106,12 @@ pub fn push_contacts(
             }
         }
 
-        if (state_a.flags & body_flags::DYNAMIC_FLAG) != 0 {
-            state_a.linear_velocity = v_a;
-            state_a.angular_velocity = w_a;
-            states.set(index_a as usize, state_a);
+        if (state_a.flags() & body_flags::DYNAMIC_FLAG) != 0 {
+            state_a.set_velocities(v_a, w_a);
         }
 
-        if (state_b.flags & body_flags::DYNAMIC_FLAG) != 0 {
-            state_b.linear_velocity = v_b;
-            state_b.angular_velocity = w_b;
-            states.set(index_b as usize, state_b);
+        if (state_b.flags() & body_flags::DYNAMIC_FLAG) != 0 {
+            state_b.set_velocities(v_b, w_b);
         }
     }
 }
@@ -141,17 +137,17 @@ pub fn solve_contacts(
         let i_b = contact_constraint.inv_i_b;
 
         // This is a dummy state to represent a static body because static bodies have no solver body.
-        let mut state_a = states.get_or_identity(index_a);
-        let mut v_a = state_a.linear_velocity;
-        let mut w_a = state_a.angular_velocity;
-        let dq_a = state_a.delta_rotation;
+        let state_a = states.at_or_identity(index_a);
+        let mut v_a = state_a.linear_velocity();
+        let mut w_a = state_a.angular_velocity();
+        let dq_a = state_a.delta_rotation();
 
-        let mut state_b = states.get_or_identity(index_b);
-        let mut v_b = state_b.linear_velocity;
-        let mut w_b = state_b.angular_velocity;
-        let dq_b = state_b.delta_rotation;
+        let state_b = states.at_or_identity(index_b);
+        let mut v_b = state_b.linear_velocity();
+        let mut w_b = state_b.angular_velocity();
+        let dq_b = state_b.delta_rotation();
 
-        let dp = sub(state_b.delta_position, state_a.delta_position);
+        let dp = sub(state_b.delta_position(), state_a.delta_position());
         let friction = contact_constraint.friction;
         let rolling_resistance = contact_constraint.rolling_resistance;
 
@@ -284,16 +280,12 @@ pub fn solve_contacts(
             }
         }
 
-        if (state_a.flags & body_flags::DYNAMIC_FLAG) != 0 {
-            state_a.linear_velocity = v_a;
-            state_a.angular_velocity = w_a;
-            states.set(index_a as usize, state_a);
+        if (state_a.flags() & body_flags::DYNAMIC_FLAG) != 0 {
+            state_a.set_velocities(v_a, w_a);
         }
 
-        if (state_b.flags & body_flags::DYNAMIC_FLAG) != 0 {
-            state_b.linear_velocity = v_b;
-            state_b.angular_velocity = w_b;
-            states.set(index_b as usize, state_b);
+        if (state_b.flags() & body_flags::DYNAMIC_FLAG) != 0 {
+            state_b.set_velocities(v_b, w_b);
         }
     }
 }

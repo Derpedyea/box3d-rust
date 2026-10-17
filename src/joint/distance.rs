@@ -351,14 +351,14 @@ pub fn warm_start_distance_joint(base: &mut JointSim, states: &SolverStates) {
 
     let joint = base.distance_mut();
 
-    let mut state_a = states.get_or_identity(joint.index_a);
-    let mut state_b = states.get_or_identity(joint.index_b);
+    let state_a = states.at_or_identity(joint.index_a);
+    let state_b = states.at_or_identity(joint.index_b);
 
-    let r_a = rotate_vector(state_a.delta_rotation, joint.anchor_a);
-    let r_b = rotate_vector(state_b.delta_rotation, joint.anchor_b);
+    let r_a = rotate_vector(state_a.delta_rotation(), joint.anchor_a);
+    let r_b = rotate_vector(state_b.delta_rotation(), joint.anchor_b);
 
     let ds = add(
-        sub(state_b.delta_position, state_a.delta_position),
+        sub(state_b.delta_position(), state_a.delta_position()),
         sub(r_b, r_a),
     );
     let separation = add(joint.delta_center, ds);
@@ -368,16 +368,18 @@ pub fn warm_start_distance_joint(base: &mut JointSim, states: &SolverStates) {
         joint.impulse + joint.lower_impulse - joint.upper_impulse + joint.motor_impulse;
     let p = mul_sv(axial_impulse, axis);
 
-    if state_a.flags & body_flags::DYNAMIC_FLAG != 0 {
-        state_a.linear_velocity = mul_sub(state_a.linear_velocity, m_a, p);
-        state_a.angular_velocity = sub(state_a.angular_velocity, mul_mv(i_a, cross(r_a, p)));
-        states.set(joint.index_a as usize, state_a);
+    if state_a.flags() & body_flags::DYNAMIC_FLAG != 0 {
+        state_a.set_velocities(
+            mul_sub(state_a.linear_velocity(), m_a, p),
+            sub(state_a.angular_velocity(), mul_mv(i_a, cross(r_a, p))),
+        );
     }
 
-    if state_b.flags & body_flags::DYNAMIC_FLAG != 0 {
-        state_b.linear_velocity = mul_add(state_b.linear_velocity, m_b, p);
-        state_b.angular_velocity = add(state_b.angular_velocity, mul_mv(i_b, cross(r_b, p)));
-        states.set(joint.index_b as usize, state_b);
+    if state_b.flags() & body_flags::DYNAMIC_FLAG != 0 {
+        state_b.set_velocities(
+            mul_add(state_b.linear_velocity(), m_b, p),
+            add(state_b.angular_velocity(), mul_mv(i_b, cross(r_b, p))),
+        );
     }
 }
 
@@ -398,19 +400,19 @@ pub fn solve_distance_joint(
 
     let joint = base.distance_mut();
 
-    let mut state_a = states.get_or_identity(joint.index_a);
-    let mut state_b = states.get_or_identity(joint.index_b);
+    let state_a = states.at_or_identity(joint.index_a);
+    let state_b = states.at_or_identity(joint.index_b);
 
-    let mut v_a = state_a.linear_velocity;
-    let mut w_a = state_a.angular_velocity;
-    let mut v_b = state_b.linear_velocity;
-    let mut w_b = state_b.angular_velocity;
+    let mut v_a = state_a.linear_velocity();
+    let mut w_a = state_a.angular_velocity();
+    let mut v_b = state_b.linear_velocity();
+    let mut w_b = state_b.angular_velocity();
 
-    let r_a = rotate_vector(state_a.delta_rotation, joint.anchor_a);
-    let r_b = rotate_vector(state_b.delta_rotation, joint.anchor_b);
+    let r_a = rotate_vector(state_a.delta_rotation(), joint.anchor_a);
+    let r_b = rotate_vector(state_b.delta_rotation(), joint.anchor_b);
 
     let ds = add(
-        sub(state_b.delta_position, state_a.delta_position),
+        sub(state_b.delta_position(), state_a.delta_position()),
         sub(r_b, r_a),
     );
     let separation = add(joint.delta_center, ds);
@@ -549,15 +551,11 @@ pub fn solve_distance_joint(
         w_b = add(w_b, mul_mv(i_b, cross(r_b, p)));
     }
 
-    if state_a.flags & body_flags::DYNAMIC_FLAG != 0 {
-        state_a.linear_velocity = v_a;
-        state_a.angular_velocity = w_a;
-        states.set(joint.index_a as usize, state_a);
+    if state_a.flags() & body_flags::DYNAMIC_FLAG != 0 {
+        state_a.set_velocities(v_a, w_a);
     }
 
-    if state_b.flags & body_flags::DYNAMIC_FLAG != 0 {
-        state_b.linear_velocity = v_b;
-        state_b.angular_velocity = w_b;
-        states.set(joint.index_b as usize, state_b);
+    if state_b.flags() & body_flags::DYNAMIC_FLAG != 0 {
+        state_b.set_velocities(v_b, w_b);
     }
 }

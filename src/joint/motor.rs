@@ -298,32 +298,32 @@ pub fn warm_start_motor_joint(base: &mut JointSim, states: &SolverStates) {
 
     let joint = base.motor_mut();
 
-    let mut state_a = states.get_or_identity(joint.index_a);
-    let mut state_b = states.get_or_identity(joint.index_b);
+    let state_a = states.at_or_identity(joint.index_a);
+    let state_b = states.at_or_identity(joint.index_b);
 
-    let r_a = rotate_vector(state_a.delta_rotation, joint.frame_a.p);
-    let r_b = rotate_vector(state_b.delta_rotation, joint.frame_b.p);
+    let r_a = rotate_vector(state_a.delta_rotation(), joint.frame_a.p);
+    let r_b = rotate_vector(state_b.delta_rotation(), joint.frame_b.p);
 
     let linear_impulse = add(joint.linear_velocity_impulse, joint.linear_spring_impulse);
     let angular_impulse = add(joint.angular_velocity_impulse, joint.angular_spring_impulse);
 
-    state_a.linear_velocity = mul_sub(state_a.linear_velocity, m_a, linear_impulse);
-    state_a.angular_velocity = sub(
-        state_a.angular_velocity,
+    let v_a = mul_sub(state_a.linear_velocity(), m_a, linear_impulse);
+    let w_a = sub(
+        state_a.angular_velocity(),
         mul_mv(i_a, add(cross(r_a, linear_impulse), angular_impulse)),
     );
-    state_b.linear_velocity = mul_add(state_b.linear_velocity, m_b, linear_impulse);
-    state_b.angular_velocity = add(
-        state_b.angular_velocity,
+    let v_b = mul_add(state_b.linear_velocity(), m_b, linear_impulse);
+    let w_b = add(
+        state_b.angular_velocity(),
         mul_mv(i_b, add(cross(r_b, linear_impulse), angular_impulse)),
     );
 
     // C writes unconditionally (no dynamic-flag guard) on warm start.
     if joint.index_a != NULL_INDEX {
-        states.set(joint.index_a as usize, state_a);
+        state_a.set_velocities(v_a, w_a);
     }
     if joint.index_b != NULL_INDEX {
-        states.set(joint.index_b as usize, state_b);
+        state_b.set_velocities(v_b, w_b);
     }
 }
 
@@ -337,16 +337,16 @@ pub fn solve_motor_joint(base: &mut JointSim, context: &StepContext, states: &So
     let i_b = base.inv_i_b;
 
     let joint = base.motor_mut();
-    let mut state_a = states.get_or_identity(joint.index_a);
-    let mut state_b = states.get_or_identity(joint.index_b);
+    let state_a = states.at_or_identity(joint.index_a);
+    let state_b = states.at_or_identity(joint.index_b);
 
-    let mut v_a = state_a.linear_velocity;
-    let mut w_a = state_a.angular_velocity;
-    let mut v_b = state_b.linear_velocity;
-    let mut w_b = state_b.angular_velocity;
+    let mut v_a = state_a.linear_velocity();
+    let mut w_a = state_a.angular_velocity();
+    let mut v_b = state_b.linear_velocity();
+    let mut w_b = state_b.angular_velocity();
 
-    let quat_a = mul_quat(state_a.delta_rotation, joint.frame_a.q);
-    let mut quat_b = mul_quat(state_b.delta_rotation, joint.frame_b.q);
+    let quat_a = mul_quat(state_a.delta_rotation(), joint.frame_a.q);
+    let mut quat_b = mul_quat(state_b.delta_rotation(), joint.frame_b.q);
 
     if dot_quat(quat_a, quat_b) < 0.0 {
         // this keeps the rotation angle in the range [-pi, pi]
@@ -403,13 +403,13 @@ pub fn solve_motor_joint(base: &mut JointSim, context: &StepContext, states: &So
         w_b = add(w_b, mul_mv(i_b, impulse));
     }
 
-    let r_a = rotate_vector(state_a.delta_rotation, joint.frame_a.p);
-    let r_b = rotate_vector(state_b.delta_rotation, joint.frame_b.p);
+    let r_a = rotate_vector(state_a.delta_rotation(), joint.frame_a.p);
+    let r_b = rotate_vector(state_b.delta_rotation(), joint.frame_b.p);
 
     // linear spring
     if joint.max_spring_force > 0.0 && joint.linear_hertz > 0.0 {
-        let dc_a = state_a.delta_position;
-        let dc_b = state_b.delta_position;
+        let dc_a = state_a.delta_position();
+        let dc_b = state_b.delta_position();
         let c = add(add(sub(dc_b, dc_a), sub(r_b, r_a)), joint.delta_center);
 
         let bias = mul_sv(joint.linear_spring.bias_rate, c);
@@ -463,15 +463,11 @@ pub fn solve_motor_joint(base: &mut JointSim, context: &StepContext, states: &So
         w_b = add(w_b, mul_mv(i_b, cross(r_b, impulse)));
     }
 
-    if state_a.flags & body_flags::DYNAMIC_FLAG != 0 {
-        state_a.linear_velocity = v_a;
-        state_a.angular_velocity = w_a;
-        states.set(joint.index_a as usize, state_a);
+    if state_a.flags() & body_flags::DYNAMIC_FLAG != 0 {
+        state_a.set_velocities(v_a, w_a);
     }
 
-    if state_b.flags & body_flags::DYNAMIC_FLAG != 0 {
-        state_b.linear_velocity = v_b;
-        state_b.angular_velocity = w_b;
-        states.set(joint.index_b as usize, state_b);
+    if state_b.flags() & body_flags::DYNAMIC_FLAG != 0 {
+        state_b.set_velocities(v_b, w_b);
     }
 }

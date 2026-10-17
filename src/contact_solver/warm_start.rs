@@ -12,13 +12,13 @@ fn warm_start_one(contact_constraint: &ContactConstraint, states: &SolverStates)
     let index_a = contact_constraint.index_a;
     let index_b = contact_constraint.index_b;
 
-    let mut state_a = states.get_or_identity(index_a);
-    let mut state_b = states.get_or_identity(index_b);
+    let state_a = states.at_or_identity(index_a);
+    let state_b = states.at_or_identity(index_b);
 
-    let mut v_a = state_a.linear_velocity;
-    let mut w_a = state_a.angular_velocity;
-    let mut v_b = state_b.linear_velocity;
-    let mut w_b = state_b.angular_velocity;
+    let mut v_a = state_a.linear_velocity();
+    let mut w_a = state_a.angular_velocity();
+    let mut v_b = state_b.linear_velocity();
+    let mut w_b = state_b.angular_velocity();
 
     let m_a = contact_constraint.inv_mass_a;
     let i_a = contact_constraint.inv_i_a;
@@ -75,16 +75,12 @@ fn warm_start_one(contact_constraint: &ContactConstraint, states: &SolverStates)
         }
     }
 
-    if (state_a.flags & body_flags::DYNAMIC_FLAG) != 0 {
-        state_a.linear_velocity = v_a;
-        state_a.angular_velocity = w_a;
-        states.set(index_a as usize, state_a);
+    if (state_a.flags() & body_flags::DYNAMIC_FLAG) != 0 {
+        state_a.set_velocities(v_a, w_a);
     }
 
-    if (state_b.flags & body_flags::DYNAMIC_FLAG) != 0 {
-        state_b.linear_velocity = v_b;
-        state_b.angular_velocity = w_b;
-        states.set(index_b as usize, state_b);
+    if (state_b.flags() & body_flags::DYNAMIC_FLAG) != 0 {
+        state_b.set_velocities(v_b, w_b);
     }
 }
 

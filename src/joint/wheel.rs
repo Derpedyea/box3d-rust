@@ -166,22 +166,22 @@ pub fn warm_start_wheel_joint(base: &mut JointSim, states: &SolverStates) {
 
     let joint = base.wheel_mut();
 
-    let mut state_a = states.get_or_identity(joint.index_a);
-    let mut state_b = states.get_or_identity(joint.index_b);
+    let state_a = states.at_or_identity(joint.index_a);
+    let state_b = states.at_or_identity(joint.index_b);
 
-    let r_a = rotate_vector(state_a.delta_rotation, joint.frame_a.p);
-    let r_b = rotate_vector(state_b.delta_rotation, joint.frame_b.p);
+    let r_a = rotate_vector(state_a.delta_rotation(), joint.frame_a.p);
+    let r_b = rotate_vector(state_b.delta_rotation(), joint.frame_b.p);
 
     let d = add(
         add(
-            sub(state_b.delta_position, state_a.delta_position),
+            sub(state_b.delta_position(), state_a.delta_position()),
             joint.delta_center,
         ),
         sub(r_b, r_a),
     );
 
-    let quat_a = mul_quat(state_a.delta_rotation, joint.frame_a.q);
-    let mut quat_b = mul_quat(state_b.delta_rotation, joint.frame_b.q);
+    let quat_a = mul_quat(state_a.delta_rotation(), joint.frame_a.q);
+    let mut quat_b = mul_quat(state_b.delta_rotation(), joint.frame_b.q);
     if dot_quat(quat_a, quat_b) < 0.0 {
         // this keeps the rotation angle in the range [-pi, pi]
         quat_b = negate_quat(quat_b);
@@ -287,22 +287,24 @@ pub fn warm_start_wheel_joint(base: &mut JointSim, states: &SolverStates) {
         );
     }
 
-    if state_a.flags & body_flags::DYNAMIC_FLAG != 0 {
-        state_a.linear_velocity = mul_sub(state_a.linear_velocity, m_a, linear_impulse);
-        state_a.angular_velocity = sub(
-            state_a.angular_velocity,
-            mul_mv(i_a, add(angular_impulse_a, angular_impulse)),
+    if state_a.flags() & body_flags::DYNAMIC_FLAG != 0 {
+        state_a.set_velocities(
+            mul_sub(state_a.linear_velocity(), m_a, linear_impulse),
+            sub(
+                state_a.angular_velocity(),
+                mul_mv(i_a, add(angular_impulse_a, angular_impulse)),
+            ),
         );
-        states.set(joint.index_a as usize, state_a);
     }
 
-    if state_b.flags & body_flags::DYNAMIC_FLAG != 0 {
-        state_b.linear_velocity = mul_add(state_b.linear_velocity, m_b, linear_impulse);
-        state_b.angular_velocity = add(
-            state_b.angular_velocity,
-            mul_mv(i_b, add(angular_impulse_b, angular_impulse)),
+    if state_b.flags() & body_flags::DYNAMIC_FLAG != 0 {
+        state_b.set_velocities(
+            mul_add(state_b.linear_velocity(), m_b, linear_impulse),
+            add(
+                state_b.angular_velocity(),
+                mul_mv(i_b, add(angular_impulse_b, angular_impulse)),
+            ),
         );
-        states.set(joint.index_b as usize, state_b);
     }
 }
 
@@ -324,20 +326,20 @@ pub fn solve_wheel_joint(
 
     let joint = base.wheel_mut();
 
-    let mut state_a = states.get_or_identity(joint.index_a);
-    let mut state_b = states.get_or_identity(joint.index_b);
+    let state_a = states.at_or_identity(joint.index_a);
+    let state_b = states.at_or_identity(joint.index_b);
 
-    let mut v_a = state_a.linear_velocity;
-    let mut w_a = state_a.angular_velocity;
-    let mut v_b = state_b.linear_velocity;
-    let mut w_b = state_b.angular_velocity;
+    let mut v_a = state_a.linear_velocity();
+    let mut w_a = state_a.angular_velocity();
+    let mut v_b = state_b.linear_velocity();
+    let mut w_b = state_b.angular_velocity();
 
     // current anchors
-    let r_a = rotate_vector(state_a.delta_rotation, joint.frame_a.p);
-    let r_b = rotate_vector(state_b.delta_rotation, joint.frame_b.p);
+    let r_a = rotate_vector(state_a.delta_rotation(), joint.frame_a.p);
+    let r_b = rotate_vector(state_b.delta_rotation(), joint.frame_b.p);
 
-    let quat_a = mul_quat(state_a.delta_rotation, joint.frame_a.q);
-    let mut quat_b = mul_quat(state_b.delta_rotation, joint.frame_b.q);
+    let quat_a = mul_quat(state_a.delta_rotation(), joint.frame_a.q);
+    let mut quat_b = mul_quat(state_b.delta_rotation(), joint.frame_b.q);
 
     if dot_quat(quat_a, quat_b) < 0.0 {
         // this keeps the rotation angle in the range [-pi, pi]
@@ -350,7 +352,7 @@ pub fn solve_wheel_joint(
 
     let d = add(
         add(
-            sub(state_b.delta_position, state_a.delta_position),
+            sub(state_b.delta_position(), state_a.delta_position()),
             joint.delta_center,
         ),
         sub(r_b, r_a),
@@ -727,15 +729,11 @@ pub fn solve_wheel_joint(
         );
     }
 
-    if state_a.flags & body_flags::DYNAMIC_FLAG != 0 {
-        state_a.linear_velocity = v_a;
-        state_a.angular_velocity = w_a;
-        states.set(joint.index_a as usize, state_a);
+    if state_a.flags() & body_flags::DYNAMIC_FLAG != 0 {
+        state_a.set_velocities(v_a, w_a);
     }
 
-    if state_b.flags & body_flags::DYNAMIC_FLAG != 0 {
-        state_b.linear_velocity = v_b;
-        state_b.angular_velocity = w_b;
-        states.set(joint.index_b as usize, state_b);
+    if state_b.flags() & body_flags::DYNAMIC_FLAG != 0 {
+        state_b.set_velocities(v_b, w_b);
     }
 }

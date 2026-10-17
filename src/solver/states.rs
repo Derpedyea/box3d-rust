@@ -172,14 +172,13 @@ impl SolverStates {
         }
     }
 
-    /// The state at `index`, or the identity state for `NULL_INDEX` (static bodies).
+    /// The state at `index`, or the identity state for `NULL_INDEX` (static bodies), to read
+    /// and write field by field like C's `b3BodyState*`.
     #[inline]
-    pub fn get_or_identity(&self, index: i32) -> BodyState {
+    pub fn at_or_identity(&self, index: i32) -> StateRef<'_> {
         let last = self.cells.len() - 1;
         let index = if index < 0 { last } else { index as usize };
-        state(&unpack(
-            self.cells[index].each_ref().map(|c| c.load(Relaxed)),
-        ))
+        StateRef(&self.cells[index])
     }
 
     /// The four 16-byte rows of the state at base-1 `index1`, or of the identity state for 0,
@@ -215,5 +214,72 @@ impl SolverStates {
         c[1].store(v1, Relaxed);
         c[2].store(w0, Relaxed);
         c[3].store(w1, Relaxed);
+    }
+}
+
+/// One state in [`SolverStates`]. Loads only the fields asked for.
+#[derive(Clone, Copy)]
+pub struct StateRef<'a>(&'a [AtomicU64; 8]);
+
+impl StateRef<'_> {
+    #[inline]
+    fn pair(self, word: usize) -> (f32, f32) {
+        let q = self.0[word].load(Relaxed);
+        (f32::from_bits(q as u32), f32::from_bits((q >> 32) as u32))
+    }
+
+    #[inline]
+    fn vec3(self, word: usize) -> Vec3 {
+        let (x, y) = self.pair(word);
+        let (z, _) = self.pair(word + 1);
+        Vec3 { x, y, z }
+    }
+
+    #[inline]
+    pub fn linear_velocity(self) -> Vec3 {
+        self.vec3(0)
+    }
+
+    #[inline]
+    pub fn angular_velocity(self) -> Vec3 {
+        self.vec3(2)
+    }
+
+    #[inline]
+    pub fn delta_position(self) -> Vec3 {
+        self.vec3(4)
+    }
+
+    #[inline]
+    pub fn flags(self) -> u32 {
+        (self.0[5].load(Relaxed) >> 32) as u32
+    }
+
+    #[inline]
+    pub fn delta_rotation(self) -> Quat {
+        let (x, y) = self.pair(6);
+        let (z, s) = self.pair(7);
+        Quat {
+            v: Vec3 { x, y, z },
+            s,
+        }
+    }
+
+    /// Write the angular velocity. Its padding lane stays zero.
+    #[inline]
+    pub fn set_angular_velocity(self, w: Vec3) {
+        let word = |a: f32, b: f32| u64::from(a.to_bits()) | (u64::from(b.to_bits()) << 32);
+        self.0[2].store(word(w.x, w.y), Relaxed);
+        self.0[3].store(word(w.z, 0.0), Relaxed);
+    }
+
+    /// Write both velocities. Their padding lanes stay zero.
+    #[inline]
+    pub fn set_velocities(self, v: Vec3, w: Vec3) {
+        let word = |a: f32, b: f32| u64::from(a.to_bits()) | (u64::from(b.to_bits()) << 32);
+        self.0[0].store(word(v.x, v.y), Relaxed);
+        self.0[1].store(word(v.z, 0.0), Relaxed);
+        self.0[2].store(word(w.x, w.y), Relaxed);
+        self.0[3].store(word(w.z, 0.0), Relaxed);
     }
 }

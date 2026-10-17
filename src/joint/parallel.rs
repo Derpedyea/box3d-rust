@@ -198,11 +198,11 @@ pub fn warm_start_parallel_joint(base: &mut JointSim, states: &SolverStates) {
 
     let joint = base.parallel_mut();
 
-    let mut state_a = states.get_or_identity(joint.index_a);
-    let mut state_b = states.get_or_identity(joint.index_b);
+    let state_a = states.at_or_identity(joint.index_a);
+    let state_b = states.at_or_identity(joint.index_b);
 
-    let mut w_a = state_a.angular_velocity;
-    let mut w_b = state_b.angular_velocity;
+    let mut w_a = state_a.angular_velocity();
+    let mut w_b = state_b.angular_velocity();
 
     let angular_impulse = blend2(
         joint.perp_impulse.x,
@@ -214,14 +214,12 @@ pub fn warm_start_parallel_joint(base: &mut JointSim, states: &SolverStates) {
     w_a = sub(w_a, mul_mv(i_a, angular_impulse));
     w_b = add(w_b, mul_mv(i_b, angular_impulse));
 
-    if state_a.flags & body_flags::DYNAMIC_FLAG != 0 {
-        state_a.angular_velocity = w_a;
-        states.set(joint.index_a as usize, state_a);
+    if state_a.flags() & body_flags::DYNAMIC_FLAG != 0 {
+        state_a.set_angular_velocity(w_a);
     }
 
-    if state_b.flags & body_flags::DYNAMIC_FLAG != 0 {
-        state_b.angular_velocity = w_b;
-        states.set(joint.index_b as usize, state_b);
+    if state_b.flags() & body_flags::DYNAMIC_FLAG != 0 {
+        state_b.set_angular_velocity(w_b);
     }
 }
 
@@ -233,14 +231,14 @@ pub fn solve_parallel_joint(base: &mut JointSim, context: &StepContext, states: 
 
     let joint = base.parallel_mut();
 
-    let mut state_a = states.get_or_identity(joint.index_a);
-    let mut state_b = states.get_or_identity(joint.index_b);
+    let state_a = states.at_or_identity(joint.index_a);
+    let state_b = states.at_or_identity(joint.index_b);
 
-    let mut w_a = state_a.angular_velocity;
-    let mut w_b = state_b.angular_velocity;
+    let mut w_a = state_a.angular_velocity();
+    let mut w_b = state_b.angular_velocity();
 
-    let quat_a = mul_quat(state_a.delta_rotation, joint.quat_a);
-    let mut quat_b = mul_quat(state_b.delta_rotation, joint.quat_b);
+    let quat_a = mul_quat(state_a.delta_rotation(), joint.quat_a);
+    let mut quat_b = mul_quat(state_b.delta_rotation(), joint.quat_b);
 
     if dot_quat(quat_a, quat_b) < 0.0 {
         // this keeps the rotation angle in the range [-pi, pi]
@@ -325,13 +323,11 @@ pub fn solve_parallel_joint(base: &mut JointSim, context: &StepContext, states: 
         w_b = add(w_b, mul_mv(i_b, angular_impulse));
     }
 
-    if state_a.flags & body_flags::DYNAMIC_FLAG != 0 {
-        state_a.angular_velocity = w_a;
-        states.set(joint.index_a as usize, state_a);
+    if state_a.flags() & body_flags::DYNAMIC_FLAG != 0 {
+        state_a.set_angular_velocity(w_a);
     }
 
-    if state_b.flags & body_flags::DYNAMIC_FLAG != 0 {
-        state_b.angular_velocity = w_b;
-        states.set(joint.index_b as usize, state_b);
+    if state_b.flags() & body_flags::DYNAMIC_FLAG != 0 {
+        state_b.set_angular_velocity(w_b);
     }
 }
