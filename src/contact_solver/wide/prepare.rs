@@ -68,20 +68,20 @@ fn gather_inv_inertia_w(sims: &[&BodySim; SIMD_WIDTH]) -> SymMatrix3W {
     }
 }
 
-/// Prepare the wide constraints for the convex contacts of one graph color. Returns true if
-/// any lane has restitution. (b3PrepareContacts_Convex, one color)
+/// Prepare the wide constraints of a block of one graph color's convex contacts. Returns
+/// true if any lane has restitution. (b3PrepareContacts_Convex)
 ///
-/// `lanes` holds the color's convex contacts in its convex contact array order, four per
-/// wide constraint. Writes the sampled normal velocity onto the manifold points of lanes that
-/// enable hit events, like C. Wide constraints are independent, so they prepare in parallel.
+/// `lanes` holds the block's contacts in the color's convex contact order, four per wide
+/// constraint. Writes the sampled normal velocity onto the manifold points of lanes that
+/// enable hit events, like C.
 pub fn prepare_contacts_convex(
-    constraints: &mut Vec<ContactConstraintWide>,
+    constraints: &mut [ContactConstraintWide],
     lanes: &mut [&mut Contact],
     sims: &[BodySim],
     states: &SolverStates,
     enable_warm_starting: bool,
-    pool: Option<&crate::parallel::ThreadPool>,
 ) -> bool {
+    debug_assert!(constraints.len() == lanes.len().div_ceil(SIMD_WIDTH));
     let zero_sim = BodySim {
         inv_mass: 0.0,
         inv_inertia_world: crate::math_functions::MAT3_ZERO,
@@ -96,14 +96,9 @@ pub fn prepare_contacts_convex(
         ..Contact::default()
     };
 
-    // Reuse last step's constraints: prepare overwrites every field.
-    let wide_count = lanes.len().div_ceil(SIMD_WIDTH);
-    constraints.truncate(wide_count);
-    constraints.resize_with(wide_count, ContactConstraintWide::zeroed);
-
-    let any_restitution = std::sync::atomic::AtomicBool::new(false);
-    crate::parallel::zip_mut(pool, constraints, lanes, SIMD_WIDTH, |constraint, chunk| {
-        let restitution = prepare_one_convex(
+    let mut any_restitution = false;
+    for (constraint, chunk) in constraints.iter_mut().zip(lanes.chunks_mut(SIMD_WIDTH)) {
+        any_restitution |= prepare_one_convex(
             constraint,
             chunk,
             sims,
@@ -113,11 +108,8 @@ pub fn prepare_contacts_convex(
             &zero_manifold,
             &zero_contact,
         );
-        if restitution {
-            any_restitution.store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-    });
-    any_restitution.into_inner()
+    }
+    any_restitution
 }
 
 /// Write the wide constraint of up to four contacts into `out`, in place (it's large).

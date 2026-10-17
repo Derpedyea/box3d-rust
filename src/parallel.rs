@@ -124,72 +124,6 @@ fn block_partition(worker_count: i32, item_count: i32, min_range: i32) -> (i32, 
     (block_size, (item_count + block_size - 1) / block_size)
 }
 
-/// `out = items.chunks_mut(chunk).map(f)`, in parallel across the pool, reusing `out`'s
-/// allocation.
-pub(crate) fn map_chunks_into<T: Send, U: Send>(
-    pool: Option<&ThreadPool>,
-    items: &mut [T],
-    chunk: usize,
-    out: &mut Vec<U>,
-    f: impl Fn(&mut [T]) -> U + Sync,
-) {
-    #[cfg(feature = "parallel")]
-    if let Some(pool) = pool {
-        if items.len() > 8 * chunk {
-            use rayon::prelude::*;
-            pool.install(|| {
-                items
-                    .par_chunks_mut(chunk)
-                    .with_min_len(4)
-                    .map(&f)
-                    .collect_into_vec(out)
-            });
-            return;
-        }
-    }
-    let _ = pool;
-    out.clear();
-    out.extend(items.chunks_mut(chunk).map(f));
-}
-
-/// `f(item, lanes chunk, out)` for `items` zipped with `lanes.chunks_mut(chunk)`, in parallel
-/// across the pool, concatenating the ids the calls push. Callers use the ids as a set.
-pub(crate) fn zip_chunks<A: Sync, B: Send>(
-    pool: Option<&ThreadPool>,
-    items: &[A],
-    lanes: &mut [B],
-    chunk: usize,
-    f: impl Fn(&A, &mut [B], &mut Vec<i32>) + Sync,
-) -> Vec<i32> {
-    debug_assert!(items.len() == lanes.len().div_ceil(chunk));
-    #[cfg(feature = "parallel")]
-    if let Some(pool) = pool {
-        if items.len() > 32 {
-            use rayon::prelude::*;
-            return pool.install(|| {
-                items
-                    .par_iter()
-                    .zip(lanes.par_chunks_mut(chunk))
-                    .with_min_len(16)
-                    .fold(Vec::new, |mut out, (item, lanes)| {
-                        f(item, lanes, &mut out);
-                        out
-                    })
-                    .reduce(Vec::new, |mut a, mut b| {
-                        a.append(&mut b);
-                        a
-                    })
-            });
-        }
-    }
-    let _ = pool;
-    let mut out = Vec::new();
-    for (item, lanes) in items.iter().zip(lanes.chunks_mut(chunk)) {
-        f(item, lanes, &mut out);
-    }
-    out
-}
-
 /// Run `main` on this thread while `worker_count - 1` pool threads run `worker`, and wait for
 /// all of them. `main` must make the workers return (they poll for it). Without a pool,
 /// just `main`.
@@ -268,34 +202,6 @@ pub(crate) fn join<A: Send, B: Send>(
     }
     let _ = pool;
     (a(), b())
-}
-
-/// `f(a_i, b chunk i)` for `a` zipped with `b.chunks_mut(chunk)`, across the pool.
-pub(crate) fn zip_mut<A: Send, B: Send>(
-    pool: Option<&ThreadPool>,
-    a: &mut [A],
-    b: &mut [B],
-    chunk: usize,
-    f: impl Fn(&mut A, &mut [B]) + Sync,
-) {
-    debug_assert!(a.len() == b.len().div_ceil(chunk));
-    #[cfg(feature = "parallel")]
-    if let Some(pool) = pool {
-        if a.len() > 8 {
-            use rayon::prelude::*;
-            pool.install(|| {
-                a.par_iter_mut()
-                    .zip(b.par_chunks_mut(chunk))
-                    .with_min_len(4)
-                    .for_each(|(x, y)| f(x, y))
-            });
-            return;
-        }
-    }
-    let _ = pool;
-    for (x, y) in a.iter_mut().zip(b.chunks_mut(chunk)) {
-        f(x, y);
-    }
 }
 
 /// Borrow the items that have a slot into a vector indexed by slot: `out[slot(x)] = x`.

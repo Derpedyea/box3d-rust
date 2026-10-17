@@ -219,30 +219,26 @@ pub fn prepare_one_contact(
     constraint
 }
 
-/// Prepare the Mesh (and overflow) contact constraints of one graph color. Returns true if any
-/// contact has restitution. (b3PrepareContacts_Mesh — serial)
+/// Prepare a block of scalar (mesh and overflow) contact constraints, one per contact in
+/// `lanes`. Returns true if any contact has restitution. (b3PrepareContacts_Mesh)
 pub fn prepare_mesh_contacts(
-    constraints: &mut Vec<ContactConstraint>,
+    constraints: &mut [ContactConstraint],
     lanes: &mut [&mut Contact],
     sims: &[BodySim],
     states: &SolverStates,
     context: &StepContext,
-    pool: Option<&crate::parallel::ThreadPool>,
 ) -> bool {
+    debug_assert!(constraints.len() == lanes.len());
     let warm_start_scale = if context.enable_warm_starting {
         1.0
     } else {
         0.0
     };
-    let any_restitution = std::sync::atomic::AtomicBool::new(false);
-
-    crate::parallel::map_chunks_into(pool, lanes, 1, constraints, |lane| {
-        let contact = &mut *lane[0];
-        if contact.restitution > 0.0 {
-            any_restitution.store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        prepare_one_contact(contact, sims, states, context, warm_start_scale)
-    });
-
-    any_restitution.into_inner()
+    let mut any_restitution = false;
+    for (constraint, contact) in constraints.iter_mut().zip(lanes.iter_mut()) {
+        let contact = &mut **contact;
+        any_restitution |= contact.restitution > 0.0;
+        *constraint = prepare_one_contact(contact, sims, states, context, warm_start_scale);
+    }
+    any_restitution
 }

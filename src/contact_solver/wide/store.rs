@@ -8,16 +8,17 @@ use crate::contact::{contact_flags, Contact};
 use crate::core::SIMD_WIDTH;
 use crate::math_functions::Vec3;
 
-/// Store impulses by contact constraint and return the contacts that are hit-event
-/// candidates. `lanes` holds the color's convex contacts in order, four per constraint.
+/// Store impulses by contact constraint and push the contacts that are hit-event candidates
+/// onto `hits`. `lanes` holds the block's convex contacts in order, four per constraint.
 /// (b3StoreImpulses_Convex)
 pub fn store_impulses_convex(
     constraints: &[ContactConstraintWide],
     lanes: &mut [&mut Contact],
     neg_hit_threshold: f32,
-    pool: Option<&crate::parallel::ThreadPool>,
-) -> Vec<i32> {
-    crate::parallel::zip_chunks(pool, constraints, lanes, SIMD_WIDTH, |c, chunk, hits| {
+    hits: &mut Vec<i32>,
+) {
+    debug_assert!(constraints.len() == lanes.len().div_ceil(SIMD_WIDTH));
+    for (c, chunk) in constraints.iter().zip(lanes.chunks_mut(SIMD_WIDTH)) {
         for (l, contact) in chunk.iter_mut().enumerate() {
             debug_assert!(c.contact_ids[l] == contact.contact_id);
             let m = &mut contact.manifolds[0];
@@ -56,5 +57,5 @@ pub fn store_impulses_convex(
                 }
             }
         }
-    })
+    }
 }

@@ -8,15 +8,17 @@
 
 use super::continuous::solve_continuous;
 use super::integrate::finalize_bodies;
+use super::stages::ColorConstraints;
 use super::StepContext;
 use crate::body::body_flags;
 use crate::broad_phase::{proxy_id, proxy_type};
 use crate::constants::GRAPH_COLOR_COUNT;
 use crate::constraint_graph::{ConstraintGraph, OVERFLOW_INDEX};
 use crate::contact::{contact_flags, Contact};
-use crate::contact_solver::wide::{prepare_contacts_convex, store_impulses_convex};
-use crate::contact_solver::{prepare_mesh_contacts, store_impulses};
+use crate::contact_solver::wide::ContactConstraintWide;
+use crate::contact_solver::ContactConstraint;
 use crate::core::NULL_INDEX;
+use crate::core::SIMD_WIDTH;
 use crate::events::{BodyMoveEvent, JointEvent};
 use crate::id::{BodyId, JointId};
 use crate::island::split_island;
@@ -175,7 +177,6 @@ pub fn solve(world: &mut World, context: &StepContext) {
     mesh_constraints.resize_with(GRAPH_COLOR_COUNT as usize, Vec::new);
     wide_constraints.resize_with(GRAPH_COLOR_COUNT as usize, Vec::new);
     let pool = world.thread_pool.clone();
-    let neg_hit_threshold = -world.hit_event_threshold;
 
     // The graph's contacts stay borrowed from prepare to store.
     let mut lanes = color_contacts(
@@ -183,45 +184,21 @@ pub fn solve(world: &mut World, context: &StepContext) {
         &mut world.contacts,
         &world.constraint_graph,
     );
-    let any_restitution = {
-        // All colors prepare at once; each color's constraints prepare in parallel too.
-        let sims = &world.solver_sets[AWAKE_SET as usize].body_sims;
-        let mut jobs: Vec<_> = wide_constraints
-            .iter_mut()
-            .zip(mesh_constraints.iter_mut())
-            .zip(lanes.split())
-            .collect();
-        let any_restitution = crate::parallel::map_reduce_blocks(
-            pool.as_deref(),
-            &mut jobs,
-            1,
-            |block| {
-                let mut any = false;
-                for ((wide, mesh), (convex_lanes, scalar_lanes)) in block.iter_mut() {
-                    any |= prepare_contacts_convex(
-                        wide,
-                        convex_lanes,
-                        sims,
-                        &states,
-                        context.enable_warm_starting,
-                        pool.as_deref(),
-                    );
-                    any |= prepare_mesh_contacts(
-                        mesh,
-                        scalar_lanes,
-                        sims,
-                        &states,
-                        context,
-                        pool.as_deref(),
-                    );
-                }
-                any
-            },
-            |a, b| a || b,
-        );
-        debug_assert!(wide_constraints[OVERFLOW_INDEX as usize].is_empty());
-        any_restitution
-    };
+    // Size the constraint arrays for the prepare stage, which overwrites every field, so
+    // last step's constraints are reused.
+    let mut lanes_by_color = lanes.split();
+    for ((wide, mesh), (convex_lanes, scalar_lanes)) in wide_constraints
+        .iter_mut()
+        .zip(mesh_constraints.iter_mut())
+        .zip(lanes_by_color.iter())
+    {
+        let wide_count = convex_lanes.len().div_ceil(SIMD_WIDTH);
+        wide.truncate(wide_count);
+        wide.resize_with(wide_count, ContactConstraintWide::zeroed);
+        mesh.truncate(scalar_lanes.len());
+        mesh.resize_with(scalar_lanes.len(), ContactConstraint::default);
+    }
+    debug_assert!(wide_constraints[OVERFLOW_INDEX as usize].is_empty());
 
     world.profile.prepare_constraints += crate::timer::get_milliseconds_and_reset(&mut ticks);
 
@@ -233,17 +210,27 @@ pub fn solve(world: &mut World, context: &StepContext) {
         .map(|color| std::mem::take(&mut color.joint_sims))
         .collect();
 
-    // Substeps and restitution. (b3SolverTask)
-    let flagged_joints = {
+    // Contact prepare, substeps, restitution, and store. (b3SolverTask)
+    let out = {
         let (color_joints, overflow_joints) = joints.split_at_mut(OVERFLOW_INDEX as usize);
         let (color_mesh, overflow_mesh) = mesh_constraints.split_at_mut(OVERFLOW_INDEX as usize);
+        let (_, overflow_lanes) = lanes_by_color.pop().expect("overflow color");
+        debug_assert!(lanes_by_color.len() == OVERFLOW_INDEX as usize);
         let colors = color_joints
             .iter_mut()
             .zip(wide_constraints.iter_mut())
             .zip(color_mesh.iter_mut())
-            .map(|((j, w), m)| (&mut j[..], &mut w[..], &mut m[..]))
+            .zip(lanes_by_color)
+            .map(
+                |(((joints, wide), mesh), (convex_lanes, scalar_lanes))| ColorConstraints {
+                    joints,
+                    wide,
+                    convex_lanes,
+                    mesh,
+                    scalar_lanes,
+                },
+            )
             .collect();
-        let restitution = world.restitution_iterations > 0 && any_restitution;
         let solver_world = super::stages::SolverWorld {
             bodies: &world.bodies,
             solver_sets: &world.solver_sets,
@@ -253,11 +240,12 @@ pub fn solve(world: &mut World, context: &StepContext) {
             restitution_threshold: world.restitution_threshold,
             enable_restitution_propagation: world.enable_restitution_propagation,
             restitution_iterations: world.restitution_iterations,
+            neg_hit_threshold: -world.hit_event_threshold,
         };
         // A pending tree rebuild runs on one worker alongside the stages, which go on with
         // the rest. Finalize needs the trees.
         let broad_phase = &mut world.broad_phase;
-        let ((flagged, times), ()) = crate::parallel::join(
+        let (out, ()) = crate::parallel::join(
             pool.as_deref(),
             || {
                 super::stages::solve_substeps(
@@ -267,17 +255,19 @@ pub fn solve(world: &mut World, context: &StepContext) {
                     super::stages::OverflowConstraints {
                         joints: &mut overflow_joints[0],
                         mesh: &mut overflow_mesh[0],
+                        lanes: overflow_lanes,
                     },
                     colors,
-                    restitution,
                 )
             },
             || broad_phase.finish_tree_update(),
         );
-        times.add_to(&mut world.profile);
-        ticks = crate::timer::get_ticks();
-        flagged
+        out
     };
+    drop(lanes);
+    out.times.add_to(&mut world.profile);
+    ticks = crate::timer::get_ticks();
+    let flagged_joints = out.flagged_joints;
 
     for (color, joint_sims) in world.constraint_graph.colors.iter_mut().zip(joints) {
         color.joint_sims = joint_sims;
@@ -296,54 +286,17 @@ pub fn solve(world: &mut World, context: &StepContext) {
 
     world.profile.restitution += crate::timer::get_milliseconds_and_reset(&mut ticks);
 
-    // Store impulses. C stores the overflow contacts with b3StoreImpulses_Overflow (the Mesh
-    // kernel, which also flags hit events) and the colors in the store stages.
+    // Flag the hit events the store stage found.
     {
-        // All colors store at once; each color's constraints store in parallel too.
-        let mut jobs: Vec<_> = wide_constraints
-            .iter()
-            .zip(mesh_constraints.iter())
-            .zip(lanes.split())
-            .collect();
-        let hits = crate::parallel::map_reduce_blocks(
-            pool.as_deref(),
-            &mut jobs,
-            1,
-            |block| {
-                let mut hits = Vec::new();
-                for ((wide, mesh), (convex_lanes, scalar_lanes)) in block.iter_mut() {
-                    hits.append(&mut store_impulses_convex(
-                        wide,
-                        convex_lanes,
-                        neg_hit_threshold,
-                        pool.as_deref(),
-                    ));
-                    hits.append(&mut store_impulses(
-                        mesh,
-                        scalar_lanes,
-                        neg_hit_threshold,
-                        pool.as_deref(),
-                    ));
-                }
-                hits
-            },
-            |mut a, mut b| {
-                a.append(&mut b);
-                a
-            },
-        );
-        drop(jobs);
-        drop(lanes);
         let task_context = &mut world.task_contexts[0];
-        for &contact_id in &hits {
+        for &contact_id in &out.hits {
             task_context.hit_event_bit_set.set_bit(contact_id as u32);
         }
-        task_context.has_hit_events |= !hits.is_empty();
+        task_context.has_hit_events |= !out.hits.is_empty();
     }
     world.mesh_constraints = mesh_constraints;
     world.wide_constraints = wide_constraints;
 
-    world.profile.store_impulses += crate::timer::get_milliseconds_and_reset(&mut ticks);
     world.profile.constraints = crate::timer::get_milliseconds(constraint_ticks);
 
     // Finalize bodies (CCD for non-bullets; bullets queued)
