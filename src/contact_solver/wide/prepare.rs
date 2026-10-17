@@ -463,7 +463,8 @@ fn prepare_one_convex(
                         if (hit_event_lanes & (1 << l)) != 0
                             && (point_index as i32) < point_counts[l]
                         {
-                            chunk[l].manifolds[0].points[point_index].normal_velocity = lane(vn, l);
+                            chunk[l].manifolds[0].points[point_index].normal_velocity =
+                                lane(&vn, l);
                         }
                     }
                 }

@@ -23,26 +23,26 @@ pub fn store_impulses_convex(
             debug_assert!(c.contact_ids[l] == contact.contact_id);
             let m = &mut contact.manifolds[0];
 
-            let f1 = lane(c.friction_impulse.x, l);
-            let f2 = lane(c.friction_impulse.y, l);
+            let f1 = lane(&c.friction_impulse.x, l);
+            let f2 = lane(&c.friction_impulse.y, l);
             m.friction_impulse = Vec3 {
-                x: f1 * lane(c.tangent1.x, l) + f2 * lane(c.tangent2.x, l),
-                y: f1 * lane(c.tangent1.y, l) + f2 * lane(c.tangent2.y, l),
-                z: f1 * lane(c.tangent1.z, l) + f2 * lane(c.tangent2.z, l),
+                x: f1 * lane(&c.tangent1.x, l) + f2 * lane(&c.tangent2.x, l),
+                y: f1 * lane(&c.tangent1.y, l) + f2 * lane(&c.tangent2.y, l),
+                z: f1 * lane(&c.tangent1.z, l) + f2 * lane(&c.tangent2.z, l),
             };
-            m.twist_impulse = lane(c.twist_impulse, l);
+            m.twist_impulse = lane(&c.twist_impulse, l);
             m.rolling_impulse = Vec3 {
-                x: lane(c.rolling_impulse.x, l),
-                y: lane(c.rolling_impulse.y, l),
-                z: lane(c.rolling_impulse.z, l),
+                x: lane(&c.rolling_impulse.x, l),
+                y: lane(&c.rolling_impulse.y, l),
+                z: lane(&c.rolling_impulse.z, l),
             };
 
             let point_count = m.point_count as usize;
             for point_index in 0..point_count {
                 let cp = &c.points[point_index];
                 let mp = &mut m.points[point_index];
-                mp.normal_impulse = lane(cp.normal_impulses, l);
-                mp.total_normal_impulse = lane(cp.total_normal_impulses, l);
+                mp.normal_impulse = lane(&cp.normal_impulses, l);
+                mp.total_normal_impulse = lane(&cp.total_normal_impulses, l);
             }
 
             if (contact.flags & contact_flags::SIM_ENABLE_HIT_EVENT) != 0 {

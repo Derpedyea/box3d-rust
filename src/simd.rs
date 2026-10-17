@@ -59,8 +59,8 @@ pub fn store_w(data: &mut [f32], a: FloatW) {
 
 /// Lane `i` of a wide float.
 #[inline]
-pub fn lane(a: FloatW, i: usize) -> f32 {
-    a.to_array()[i]
+pub fn lane(a: &FloatW, i: usize) -> f32 {
+    a.as_array_ref()[i]
 }
 
 /// Sign flip, like scalar `-x` (`0 - x` would turn `-0` into `+0`). (b3NegW)

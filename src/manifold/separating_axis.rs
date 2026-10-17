@@ -838,12 +838,12 @@ fn compute_separating_axis_in(
             // they never update or index edges out of range.
             for l in 0..SIMD_WIDTH {
                 let ei = i + l;
-                let sep = lane(separation, l);
+                let sep = lane(&separation, l);
                 if sep > res.edge.separation {
                     res.edge.normal = Vec3 {
-                        x: lane(n.x, l),
-                        y: lane(n.y, l),
-                        z: lane(n.z, l),
+                        x: lane(&n.x, l),
+                        y: lane(&n.y, l),
+                        z: lane(&n.z, l),
                     };
                     res.edge.separation = sep;
 
