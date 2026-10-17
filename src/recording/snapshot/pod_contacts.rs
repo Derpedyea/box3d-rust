@@ -286,7 +286,10 @@ pub fn des_shapes(r: &mut SnapReader<'_>, world: &mut World, slots: &mut [Regist
                     r.ok = false;
                     ShapeGeometry::default()
                 } else if let Some(mesh) = convert_bytes_to_mesh(&slots[gid].bytes) {
-                    ShapeGeometry::Mesh { data: mesh, scale }
+                    ShapeGeometry::Mesh {
+                        data: Box::new(mesh),
+                        scale,
+                    }
                 } else {
                     r.ok = false;
                     ShapeGeometry::default()
@@ -298,7 +301,7 @@ pub fn des_shapes(r: &mut SnapReader<'_>, world: &mut World, slots: &mut [Regist
                     r.ok = false;
                     ShapeGeometry::default()
                 } else if let Some(hf) = convert_bytes_to_height_field(&slots[gid].bytes) {
-                    ShapeGeometry::HeightField(hf)
+                    ShapeGeometry::HeightField(Box::new(hf))
                 } else {
                     r.ok = false;
                     ShapeGeometry::default()
@@ -310,7 +313,7 @@ pub fn des_shapes(r: &mut SnapReader<'_>, world: &mut World, slots: &mut [Regist
                     r.ok = false;
                     ShapeGeometry::default()
                 } else if let Some(c) = slots[gid].ensure_compound().cloned() {
-                    ShapeGeometry::Compound(c)
+                    ShapeGeometry::Compound(Box::new(c))
                 } else {
                     r.ok = false;
                     ShapeGeometry::default()

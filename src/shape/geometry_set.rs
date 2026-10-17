@@ -129,7 +129,7 @@ pub fn shape_set_mesh(world: &mut World, shape_id: ShapeId, mesh: &MeshData, sca
     {
         let shape = &mut world.shapes[index as usize];
         shape.geometry = ShapeGeometry::Mesh {
-            data: mesh.clone(),
+            data: Box::new(mesh.clone()),
             scale: safe_scale(scale),
         };
         shape.aabb_margin = compute_shape_margin(shape);

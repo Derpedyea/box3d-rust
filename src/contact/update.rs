@@ -690,7 +690,7 @@ fn update_compound_contact(
             // builds a temporary child shape. Compound mesh children are rare.
             let mut child_shape = shape_a.clone();
             child_shape.geometry = ShapeGeometry::Mesh {
-                data: mesh.data.clone(),
+                data: Box::new(mesh.data.clone()),
                 scale: mesh.scale,
             };
             let xf_child = mul_world_transforms(xf_a, child_transform);

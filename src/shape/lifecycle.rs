@@ -352,7 +352,7 @@ pub fn create_mesh_shape(
         body_id,
         def,
         ShapeGeometry::Mesh {
-            data: mesh.clone(),
+            data: Box::new(mesh.clone()),
             scale: safe_scale(scale),
         },
     );
@@ -385,7 +385,7 @@ pub fn create_height_field_shape(
         world,
         body_id,
         def,
-        ShapeGeometry::HeightField(height_field.clone()),
+        ShapeGeometry::HeightField(Box::new(height_field.clone())),
     );
     if shape_id.index1 != 0 {
         crate::recording::with_recording(world, |rec| {
@@ -420,7 +420,7 @@ pub fn create_baked_compound_shape(
         world,
         body_id,
         def,
-        ShapeGeometry::Compound(compound.clone()),
+        ShapeGeometry::Compound(Box::new(compound.clone())),
     );
     if shape_id.index1 != 0 {
         crate::recording::with_recording(world, |rec| {

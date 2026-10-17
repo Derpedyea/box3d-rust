@@ -46,13 +46,15 @@ pub enum ShapeGeometry {
     Sphere(Sphere),
     /// Shared hull from the world hull database. (C: `const b3HullData* hull`)
     Hull(Arc<HullData>),
+    // The large variants are boxed so every shape stays small: the per-step shape passes
+    // stream the whole shape array.
     /// Mesh data plus per-instance scale (C: `b3Mesh { data*, scale }`).
     Mesh {
-        data: MeshData,
+        data: Box<MeshData>,
         scale: Vec3,
     },
-    HeightField(HeightFieldData),
-    Compound(CompoundData),
+    HeightField(Box<HeightFieldData>),
+    Compound(Box<CompoundData>),
 }
 
 impl ShapeGeometry {
@@ -264,7 +266,7 @@ pub fn is_convex(shape_type: ShapeType) -> bool {
 /// Convenience: unit-scale mesh geometry. (b3Mesh with identity scale)
 pub fn mesh_geometry(data: MeshData) -> ShapeGeometry {
     ShapeGeometry::Mesh {
-        data,
+        data: Box::new(data),
         scale: VEC3_ONE,
     }
 }
