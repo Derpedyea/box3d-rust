@@ -123,15 +123,14 @@ impl World {
         let tree_task_pending = !solve_finishes_tree_task;
 
         // Solve velocities, integrate positions, and update the broad-phase
-        // The tree rebuild queued by pair finding runs with the narrow phase; finish it here
-        // if that didn't run.
-        self.broad_phase.finish_tree_update();
-
+        // The tree rebuild queued by pair finding runs with the narrow phase or the solver
+        // stages; finish it here if neither ran.
         if time_step > 0.0 {
             let solve_ticks = crate::timer::get_ticks();
             solve(self, &context);
             self.profile.solve = crate::timer::get_milliseconds(solve_ticks);
         }
+        self.broad_phase.finish_tree_update();
 
         // Finish the tree task in case b3Solve didn't finish it
         if tree_task_pending {

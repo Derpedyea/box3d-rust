@@ -254,16 +254,25 @@ pub fn solve(world: &mut World, context: &StepContext) {
             enable_restitution_propagation: world.enable_restitution_propagation,
             restitution_iterations: world.restitution_iterations,
         };
-        let (flagged, times) = super::stages::solve_substeps(
-            &solver_world,
-            &states,
-            context,
-            super::stages::OverflowConstraints {
-                joints: &mut overflow_joints[0],
-                mesh: &mut overflow_mesh[0],
+        // A pending tree rebuild runs on one worker alongside the stages, which go on with
+        // the rest. Finalize needs the trees.
+        let broad_phase = &mut world.broad_phase;
+        let ((flagged, times), ()) = crate::parallel::join(
+            pool.as_deref(),
+            || {
+                super::stages::solve_substeps(
+                    &solver_world,
+                    &states,
+                    context,
+                    super::stages::OverflowConstraints {
+                        joints: &mut overflow_joints[0],
+                        mesh: &mut overflow_mesh[0],
+                    },
+                    colors,
+                    restitution,
+                )
             },
-            colors,
-            restitution,
+            || broad_phase.finish_tree_update(),
         );
         times.add_to(&mut world.profile);
         ticks = crate::timer::get_ticks();
