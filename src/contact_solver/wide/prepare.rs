@@ -4,7 +4,7 @@
 //! SPDX-License-Identifier: MIT
 
 use super::{
-    add_sym_w, gather_bodies, invert_sym_w, lane, mul_mvw, perp_w, ContactConstraintPointWide,
+    add_sym_w, gather_bodies, invert_sym_w, mul_mvw, perp_w, ContactConstraintPointWide,
     ContactConstraintWide, SymMatrix2W, SymMatrix3W, Vec2W, EMPTY_LANE, SYM3W_ZERO,
 };
 use crate::body::{decode_awake_index, BodySim};
@@ -71,17 +71,18 @@ fn gather_inv_inertia_w(sims: &[&BodySim; SIMD_WIDTH]) -> SymMatrix3W {
 /// Prepare the wide constraints of a block of one graph color's convex contacts. Returns
 /// true if any lane has restitution. (b3PrepareContacts_Convex)
 ///
-/// `lanes` holds the block's contacts in the color's convex contact order, four per wide
-/// constraint. Writes the sampled normal velocity onto the manifold points of lanes that
-/// enable hit events, like C.
+/// `ids` holds the block's contacts in the color's convex contact order, four per wide
+/// constraint. The sampled normal velocity goes onto the manifold points of lanes that
+/// enable hit events at store ([`super::store_impulses_convex`]).
 pub fn prepare_contacts_convex(
     constraints: &mut [ContactConstraintWide],
-    lanes: &mut [&mut Contact],
+    ids: &[i32],
+    contacts: &[Contact],
     sims: &[BodySim],
     states: &SolverStates,
     enable_warm_starting: bool,
 ) -> bool {
-    debug_assert!(constraints.len() == lanes.len().div_ceil(SIMD_WIDTH));
+    debug_assert!(constraints.len() == ids.len().div_ceil(SIMD_WIDTH));
     let zero_sim = BodySim {
         inv_mass: 0.0,
         inv_inertia_world: crate::math_functions::MAT3_ZERO,
@@ -97,10 +98,14 @@ pub fn prepare_contacts_convex(
     };
 
     let mut any_restitution = false;
-    for (constraint, chunk) in constraints.iter_mut().zip(lanes.chunks_mut(SIMD_WIDTH)) {
+    for (constraint, ids) in constraints.iter_mut().zip(ids.chunks(SIMD_WIDTH)) {
+        let lanes: [&Contact; SIMD_WIDTH] = core::array::from_fn(|l| {
+            ids.get(l)
+                .map_or(&zero_contact, |&id| &contacts[id as usize])
+        });
         any_restitution |= prepare_one_convex(
             constraint,
-            chunk,
+            &lanes[..ids.len()],
             sims,
             states,
             enable_warm_starting,
@@ -116,7 +121,7 @@ pub fn prepare_contacts_convex(
 /// Returns whether a lane has restitution.
 fn prepare_one_convex(
     out: &mut ContactConstraintWide,
-    chunk: &mut [&mut Contact],
+    chunk: &[&Contact],
     sims: &[BodySim],
     states: &SolverStates,
     enable_warm_starting: bool,
@@ -145,7 +150,7 @@ fn prepare_one_convex(
 
         for lane_index in 0..SIMD_WIDTH {
             if lane_index < chunk.len() {
-                let contact = &*chunk[lane_index];
+                let contact = chunk[lane_index];
                 let contact_id = contact.contact_id;
                 debug_assert!(contact.manifold_count() == 1);
 
@@ -183,7 +188,7 @@ fn prepare_one_convex(
             if lane_ids[i] == EMPTY_LANE {
                 zero_contact
             } else {
-                &*chunk[i]
+                chunk[i]
             }
         });
         let manifold_lanes: [&Manifold; SIMD_WIDTH] = core::array::from_fn(|i| {
@@ -452,22 +457,10 @@ fn prepare_one_convex(
             let b_a = gather_bodies(states, &index_a);
             let b_b = gather_bodies(states, &index_b);
 
-            for (point_index, cp) in points.iter_mut().enumerate() {
+            for cp in points.iter_mut() {
                 let vr_a = add_vw(b_a.v, cross_w(b_a.w, cp.anchor_as));
                 let vr_b = add_vw(b_b.v, cross_w(b_b.w, cp.anchor_bs));
-                let vn = dot_w(normal, sub_vw(vr_b, vr_a));
-                cp.relative_velocities = vn;
-
-                if hit_event_lanes != 0 {
-                    for l in 0..SIMD_WIDTH {
-                        if (hit_event_lanes & (1 << l)) != 0
-                            && (point_index as i32) < point_counts[l]
-                        {
-                            chunk[l].manifolds[0].points[point_index].normal_velocity =
-                                lane(&vn, l);
-                        }
-                    }
-                }
+                cp.relative_velocities = dot_w(normal, sub_vw(vr_b, vr_a));
             }
         }
 

@@ -20,14 +20,14 @@ use super::integrate::{integrate_positions, integrate_velocities};
 use super::states::SolverStates;
 use super::StepContext;
 use crate::constants::{RELAX_ITERATIONS, SOLVER_ITERATIONS};
-use crate::contact::Contact;
+use crate::contact::{Contact, ContactSpec};
 use crate::contact_solver::wide::{
     apply_restitution_convex, prepare_contacts_convex, push_contacts_convex, solve_contacts_convex,
-    store_impulses_convex, warm_start_contacts_convex, ContactConstraintWide,
+    warm_start_contacts_convex, ContactConstraintWide,
 };
 use crate::contact_solver::{
-    apply_restitution, prepare_mesh_contacts, push_contacts, solve_contacts, store_impulses,
-    warm_start_contacts, ContactConstraint,
+    apply_restitution, prepare_mesh_contacts, push_contacts, solve_contacts, warm_start_contacts,
+    ContactConstraint,
 };
 use crate::joint::{get_joint_reaction_in, solve_joint, warm_start_joint, JointSim};
 use crate::timer::{get_milliseconds_and_reset, get_ticks};
@@ -44,7 +44,7 @@ pub(super) struct SolverWorld<'a> {
     pub restitution_threshold: f32,
     pub enable_restitution_propagation: bool,
     pub restitution_iterations: i32,
-    pub neg_hit_threshold: f32,
+    pub contacts: &'a [Contact],
 }
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -59,8 +59,6 @@ enum StageKind {
     IntegratePositions,
     Relax,
     Restitution,
-    /// Over the contact blocks of every color.
-    StoreImpulses,
 }
 
 impl StageKind {
@@ -72,7 +70,7 @@ impl StageKind {
     }
 
     fn on_contacts(self) -> bool {
-        matches!(self, StageKind::PrepareContacts | StageKind::StoreImpulses)
+        self == StageKind::PrepareContacts
     }
 }
 
@@ -85,7 +83,6 @@ enum Overflow {
     Solve,
     Relax,
     Restitution,
-    Store,
 }
 
 #[derive(Clone, Copy)]
@@ -100,11 +97,11 @@ struct Stage {
 }
 
 /// Some constraints of one color, with their contacts.
-enum Unit<'a, 'c> {
+enum Unit<'a> {
     Joints(&'a mut [JointSim]),
-    /// Four contacts per constraint.
-    Wide(&'a mut [ContactConstraintWide], &'a mut [&'c mut Contact]),
-    Mesh(&'a mut [ContactConstraint], &'a mut [&'c mut Contact]),
+    /// Four contact ids per constraint.
+    Wide(&'a mut [ContactConstraintWide], &'a [i32]),
+    Mesh(&'a mut [ContactConstraint], &'a [ContactSpec]),
 }
 
 /// Per stage completion counter.
@@ -127,13 +124,13 @@ fn block_dim(item_count: usize, min_size: usize, max_block_count: usize) -> (usi
 }
 
 /// Everything a worker needs, shared by reference.
-struct Shared<'a, 'u, 'c> {
+struct Shared<'a, 'u> {
     world: &'a SolverWorld<'a>,
     states: &'a SolverStates,
     context: &'a StepContext,
     stages: &'a [Stage],
     syncs: &'a [StageSync],
-    units: &'a [Vec<Mutex<Unit<'u, 'c>>>],
+    units: &'a [Vec<Mutex<Unit<'u>>>],
     /// The contact units of every color, as (color, unit).
     contact_units: &'a [(usize, usize)],
     /// Per block claim values: of each color's units, of the body blocks, and of the
@@ -154,10 +151,9 @@ struct Shared<'a, 'u, 'c> {
     finished: AtomicBool,
     flagged_joints: Mutex<Vec<i32>>,
     any_restitution: AtomicBool,
-    hits: Mutex<Vec<i32>>,
 }
 
-impl Shared<'_, '_, '_> {
+impl Shared<'_, '_> {
     fn block_count(&self, stage: &Stage) -> usize {
         if stage.kind.on_bodies() {
             self.body_block_count
@@ -274,9 +270,10 @@ impl Shared<'_, '_, '_> {
                         }
                     }
                     (Unit::Joints(_), _) => {}
-                    (Unit::Wide(c, lanes), StageKind::PrepareContacts) => {
+                    (Unit::Wide(c, ids), StageKind::PrepareContacts) => {
                         let ews = context.enable_warm_starting;
-                        if prepare_contacts_convex(c, lanes, sims, states, ews) {
+                        let contacts = self.world.contacts;
+                        if prepare_contacts_convex(c, ids, contacts, sims, states, ews) {
                             self.any_restitution.store(true, Ordering::Relaxed);
                         }
                     }
@@ -289,11 +286,6 @@ impl Shared<'_, '_, '_> {
                     (Unit::Wide(c, _), StageKind::Relax) => {
                         solve_contacts_convex(c, states, context)
                     }
-                    (Unit::Wide(c, lanes), StageKind::StoreImpulses) => {
-                        let mut hits = Vec::new();
-                        store_impulses_convex(c, lanes, self.world.neg_hit_threshold, &mut hits);
-                        self.push_hits(hits);
-                    }
                     (Unit::Wide(c, _), StageKind::Restitution) => apply_restitution_convex(
                         c,
                         states,
@@ -301,19 +293,15 @@ impl Shared<'_, '_, '_> {
                         self.restitution_threshold,
                         self.propagate,
                     ),
-                    (Unit::Mesh(c, lanes), StageKind::PrepareContacts) => {
-                        if prepare_mesh_contacts(c, lanes, sims, states, context) {
+                    (Unit::Mesh(c, specs), StageKind::PrepareContacts) => {
+                        let contacts = self.world.contacts;
+                        if prepare_mesh_contacts(c, specs, contacts, sims, states, context) {
                             self.any_restitution.store(true, Ordering::Relaxed);
                         }
                     }
                     (Unit::Mesh(c, _), StageKind::WarmStart) => warm_start_contacts(c, states),
                     (Unit::Mesh(c, _), StageKind::Solve) => push_contacts(c, states, context),
                     (Unit::Mesh(c, _), StageKind::Relax) => solve_contacts(c, states, context),
-                    (Unit::Mesh(c, lanes), StageKind::StoreImpulses) => {
-                        let mut hits = Vec::new();
-                        store_impulses(c, lanes, self.world.neg_hit_threshold, &mut hits);
-                        self.push_hits(hits);
-                    }
                     (Unit::Mesh(c, _), StageKind::Restitution) => apply_restitution(
                         c,
                         states,
@@ -326,15 +314,6 @@ impl Shared<'_, '_, '_> {
                     }
                 }
             }
-        }
-    }
-
-    fn push_hits(&self, mut hits: Vec<i32>) {
-        if !hits.is_empty() {
-            self.hits
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .append(&mut hits);
         }
     }
 
@@ -387,28 +366,26 @@ pub(super) fn joint_reaction_exceeded(
 
 /// The constraints of the overflow color, run serially by the orchestrator, with the mesh
 /// constraints' contacts.
-pub(super) struct OverflowConstraints<'a, 'c> {
+pub(super) struct OverflowConstraints<'a> {
     pub joints: &'a mut [JointSim],
     pub mesh: &'a mut [ContactConstraint],
-    pub lanes: &'a mut [&'c mut Contact],
+    pub specs: &'a [ContactSpec],
 }
 
 /// The constraints of one graph color, with the contacts of the contact constraints.
-pub(super) struct ColorConstraints<'a, 'c> {
+pub(super) struct ColorConstraints<'a> {
     pub joints: &'a mut [JointSim],
     pub wide: &'a mut [ContactConstraintWide],
     /// Four per wide constraint.
-    pub convex_lanes: &'a mut [&'c mut Contact],
+    pub convex_ids: &'a [i32],
     pub mesh: &'a mut [ContactConstraint],
-    pub scalar_lanes: &'a mut [&'c mut Contact],
+    pub specs: &'a [ContactSpec],
 }
 
 /// What the stages leave for the rest of the step.
 pub(super) struct SubstepsOut {
     /// The joints the biased solve flagged for `joint_state_bit_set`.
     pub flagged_joints: Vec<i32>,
-    /// The hit-event candidate contacts.
-    pub hits: Vec<i32>,
     pub times: StageTimes,
 }
 
@@ -422,13 +399,11 @@ pub(super) struct StageTimes {
     pub integrate_positions: f32,
     pub relax_impulses: f32,
     pub restitution: f32,
-    pub store_impulses: f32,
 }
 
 impl StageTimes {
     pub fn add_to(&self, profile: &mut Profile) {
         profile.prepare_constraints += self.prepare_contacts;
-        profile.store_impulses += self.store_impulses;
         profile.integrate_velocities += self.integrate_velocities;
         profile.warm_start += self.warm_start;
         profile.solve_impulses += self.solve_impulses;
@@ -438,32 +413,32 @@ impl StageTimes {
     }
 }
 
-/// Prepare the contact constraints, run the substeps and restitution, and store the
-/// impulses. The constraint slices must already have their final lengths.
+/// Prepare the contact constraints and run the substeps and restitution. The constraint
+/// slices must already have their final lengths.
 pub(super) fn solve_substeps(
     world: &SolverWorld<'_>,
     states: &SolverStates,
     context: &StepContext,
-    overflow: OverflowConstraints<'_, '_>,
-    colors: Vec<ColorConstraints<'_, '_>>,
+    overflow: OverflowConstraints<'_>,
+    colors: Vec<ColorConstraints<'_>>,
 ) -> SubstepsOut {
     let pool = world.pool;
     let worker_count = pool.map_or(1, |p| p.current_num_threads()).max(1);
     let max_block_count = 4 * worker_count;
 
     // Blocks per active color: joints, then wide contacts, then mesh contacts.
-    let mut units: Vec<Vec<Mutex<Unit<'_, '_>>>> = Vec::new();
+    let mut units: Vec<Vec<Mutex<Unit<'_>>>> = Vec::new();
     let mut contact_units = Vec::new();
     for color in colors {
         let ColorConstraints {
             joints,
             wide,
-            mut convex_lanes,
+            convex_ids,
             mesh,
-            scalar_lanes,
+            specs,
         } = color;
-        debug_assert!(wide.len() == convex_lanes.len().div_ceil(crate::core::SIMD_WIDTH));
-        debug_assert!(mesh.len() == scalar_lanes.len());
+        debug_assert!(wide.len() == convex_ids.len().div_ceil(crate::core::SIMD_WIDTH));
+        debug_assert!(mesh.len() == specs.len());
         if joints.is_empty() && wide.is_empty() && mesh.is_empty() {
             continue;
         }
@@ -472,17 +447,16 @@ pub(super) fn solve_substeps(
         color_units.extend(joints.chunks_mut(size).map(|c| Mutex::new(Unit::Joints(c))));
         let first_contact_unit = color_units.len();
         let (size, _) = block_dim(wide.len(), 4, max_block_count);
-        for c in wide.chunks_mut(size) {
-            let n = (c.len() * crate::core::SIMD_WIDTH).min(convex_lanes.len());
-            let (lanes, rest) = std::mem::take(&mut convex_lanes).split_at_mut(n);
-            convex_lanes = rest;
-            color_units.push(Mutex::new(Unit::Wide(c, lanes)));
-        }
+        color_units.extend(
+            wide.chunks_mut(size)
+                .zip(convex_ids.chunks(size * crate::core::SIMD_WIDTH))
+                .map(|(c, ids)| Mutex::new(Unit::Wide(c, ids))),
+        );
         let (size, _) = block_dim(mesh.len(), 4, max_block_count);
         color_units.extend(
             mesh.chunks_mut(size)
-                .zip(scalar_lanes.chunks_mut(size))
-                .map(|(c, lanes)| Mutex::new(Unit::Mesh(c, lanes))),
+                .zip(specs.chunks(size))
+                .map(|(c, specs)| Mutex::new(Unit::Mesh(c, specs))),
         );
         let color_index = units.len();
         contact_units.extend((first_contact_unit..color_units.len()).map(|u| (color_index, u)));
@@ -538,17 +512,11 @@ pub(super) fn solve_substeps(
             graph(&mut stages, StageKind::Relax, Overflow::Relax);
         }
     }
-    // These run only if prepare finds restitution. Nothing after them shares their blocks,
-    // so skipping them leaves the claim chains intact.
+    // These run only if prepare finds restitution. They come last, so skipping them leaves
+    // the claim chains intact.
     for _ in 0..world.restitution_iterations {
         graph(&mut stages, StageKind::Restitution, Overflow::Restitution);
     }
-    stages.push(Stage {
-        kind: StageKind::StoreImpulses,
-        color: 0,
-        overflow: Overflow::Store,
-        prev: 0,
-    });
 
     // Chain each stage to the last one on the same blocks.
     let mut last_body = 0;
@@ -601,12 +569,11 @@ pub(super) fn solve_substeps(
         finished: AtomicBool::new(false),
         flagged_joints: Mutex::new(Vec::new()),
         any_restitution: AtomicBool::new(false),
-        hits: Mutex::new(Vec::new()),
     };
 
     let mut overflow = overflow;
     let mut times = StageTimes::default();
-    let orchestrate = |overflow: &mut OverflowConstraints<'_, '_>, times: &mut StageTimes| {
+    let orchestrate = |overflow: &mut OverflowConstraints<'_>, times: &mut StageTimes| {
         let mut ticks = get_ticks();
         let mut flagged = Vec::new();
         let sims = &world.solver_sets[crate::solver_set::AWAKE_SET as usize].body_sims;
@@ -622,20 +589,10 @@ pub(super) fn solve_substeps(
                 Overflow::None => {}
                 Overflow::Prepare => {
                     // (b3PrepareContacts_Overflow)
-                    if prepare_mesh_contacts(overflow.mesh, overflow.lanes, sims, states, context) {
+                    let (mesh, specs) = (&mut *overflow.mesh, overflow.specs);
+                    if prepare_mesh_contacts(mesh, specs, world.contacts, sims, states, context) {
                         shared.any_restitution.store(true, Ordering::Relaxed);
                     }
-                }
-                Overflow::Store => {
-                    // (b3StoreImpulses_Overflow)
-                    let mut hits = Vec::new();
-                    store_impulses(
-                        overflow.mesh,
-                        overflow.lanes,
-                        world.neg_hit_threshold,
-                        &mut hits,
-                    );
-                    shared.push_hits(hits);
                 }
                 Overflow::WarmStart => {
                     for joint in overflow.joints.iter_mut() {
@@ -697,7 +654,6 @@ pub(super) fn solve_substeps(
                 let ms = get_milliseconds_and_reset(&mut ticks);
                 match stage.kind {
                     StageKind::PrepareContacts => times.prepare_contacts += ms,
-                    StageKind::StoreImpulses => times.store_impulses += ms,
                     StageKind::IntegrateVelocities => times.integrate_velocities += ms,
                     StageKind::WarmStart => times.warm_start += ms,
                     StageKind::Solve => times.solve_impulses += ms,
@@ -725,7 +681,6 @@ pub(super) fn solve_substeps(
     );
     SubstepsOut {
         flagged_joints: flagged,
-        hits: shared.hits.into_inner().unwrap_or_else(|e| e.into_inner()),
         times,
     }
 }

@@ -27,11 +27,10 @@ use crate::solver::StepContext;
 /// Build one contact constraint from a touching contact. (inner loop of
 /// b3PrepareContacts_Mesh)
 ///
-/// Also writes `normal_velocity` onto the contact's manifold points, like C, because
-/// the pre-solve normal velocity is only sampled here (and only when restitution or hit
-/// events need it).
+/// The sampled pre-solve normal velocity goes onto the manifold points at store
+/// ([`super::store_impulses`]), where C's hit-event check reads it.
 pub fn prepare_one_contact(
-    contact: &mut Contact,
+    contact: &Contact,
     sims: &[BodySim],
     states: &SolverStates,
     context: &StepContext,
@@ -108,7 +107,7 @@ pub fn prepare_one_contact(
     let tangent_velocity = contact.tangent_velocity;
 
     for manifold_index in 0..manifold_count as usize {
-        let manifold = &mut contact.manifolds[manifold_index];
+        let manifold = &contact.manifolds[manifold_index];
         let point_count = manifold.point_count;
         let normal = manifold.normal;
         let tangent1 = perp(normal);
@@ -130,7 +129,7 @@ pub fn prepare_one_contact(
 
         for point_index in 0..point_count as usize {
             // Copy data from manifold point
-            let mp = &mut manifold.points[point_index];
+            let mp = &manifold.points[point_index];
             let s = mp.separation;
             let mut cp = ManifoldConstraintPoint {
                 r_a: mp.anchor_a,
@@ -157,10 +156,8 @@ pub fn prepare_one_contact(
                 let vn = dot(normal, sub(vr_b, vr_a));
 
                 cp.relative_velocity = vn;
-                mp.normal_velocity = if hit_events { vn } else { 0.0 };
             } else {
                 cp.relative_velocity = 0.0;
-                mp.normal_velocity = 0.0;
             }
 
             // C0 friction center decay. Needed to prevent spinning top drift (GyroscopicPrecession sample).
@@ -220,23 +217,24 @@ pub fn prepare_one_contact(
 }
 
 /// Prepare a block of scalar (mesh and overflow) contact constraints, one per contact in
-/// `lanes`. Returns true if any contact has restitution. (b3PrepareContacts_Mesh)
+/// `specs`. Returns true if any contact has restitution. (b3PrepareContacts_Mesh)
 pub fn prepare_mesh_contacts(
     constraints: &mut [ContactConstraint],
-    lanes: &mut [&mut Contact],
+    specs: &[crate::contact::ContactSpec],
+    contacts: &[Contact],
     sims: &[BodySim],
     states: &SolverStates,
     context: &StepContext,
 ) -> bool {
-    debug_assert!(constraints.len() == lanes.len());
+    debug_assert!(constraints.len() == specs.len());
     let warm_start_scale = if context.enable_warm_starting {
         1.0
     } else {
         0.0
     };
     let mut any_restitution = false;
-    for (constraint, contact) in constraints.iter_mut().zip(lanes.iter_mut()) {
-        let contact = &mut **contact;
+    for (constraint, spec) in constraints.iter_mut().zip(specs) {
+        let contact = &contacts[spec.contact_id as usize];
         any_restitution |= contact.restitution > 0.0;
         *constraint = prepare_one_contact(contact, sims, states, context, warm_start_scale);
     }
