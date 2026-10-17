@@ -58,6 +58,19 @@ fn refit_subtree(nodes: &mut [TreeNode], root_index: i32) {
     }
 }
 
+/// Flag internal node `index` (with `flags`) moved if a child moved. Returns its flags.
+#[inline]
+fn flag_if_children_moved(nodes: &mut [TreeNode], index: usize, flags: u32) -> u32 {
+    if flags & (LEAF_NODE | MOVED_NODE) == 0 {
+        let pair = (flags & NODE_INDEX_MASK) as usize;
+        if (nodes[pair].flag_index | nodes[pair + 1].flag_index) & MOVED_NODE != 0 {
+            nodes[index].flag_index = flags | MOVED_NODE;
+            return flags | MOVED_NODE;
+        }
+    }
+    flags
+}
+
 impl DynamicTree {
     /// Set the moved flag on the ancestors of the proxy. Serial use case.
     /// (b3DynamicTree_MarkProxyMovedSerial)
@@ -113,6 +126,23 @@ impl DynamicTree {
 
             index = self.parents[index as usize];
         }
+    }
+
+    /// [`Self::mark_proxy_moved`] for a DFS-ordered tree, without the walk up: set the leaf's
+    /// box and flag, and let the next [`Self::refit`] flag the ancestors on its way up. The
+    /// flags end up the same, and the leaves don't share the ancestor walks.
+    pub fn mark_leaf_moved(&mut self, proxy_id: i32, aabb: Aabb) {
+        if !self.dfs_ordered {
+            self.mark_proxy_moved(proxy_id, aabb);
+            return;
+        }
+        let index = self.proxies[proxy_id as usize].node;
+        let node = &mut self.nodes[index as usize];
+        debug_assert!(node.is_leaf());
+        debug_assert!(!aabb_contains(node.aabb, aabb));
+        node.aabb = aabb;
+        node.flag_index |= MOVED_NODE;
+        self.leaf_marks_pending = true;
     }
 
     /// Clear the moved flags from the entire tree. (b3DynamicTree_ClearMoved)
@@ -202,13 +232,15 @@ impl DynamicTree {
     /// Refit the moved internal nodes so they contain their children. The moved flags are
     /// kept for pair finding. (b3DynamicTree_Refit)
     pub fn refit(&mut self) {
-        if !self.has_tree_moved() {
+        let propagate = std::mem::take(&mut self.leaf_marks_pending);
+        if !self.has_tree_moved() && !propagate {
             return;
         }
 
         let nodes = &mut self.nodes;
 
         if !self.dfs_ordered {
+            debug_assert!(!propagate);
             // This only happens in unit tests.
             refit_subtree(nodes, ROOT_NODE);
             return;
@@ -217,8 +249,14 @@ impl DynamicTree {
         let mut pair = self.node_end - 2;
         while pair >= 0 {
             let p = pair as usize;
-            let flags1 = nodes[p].flag_index;
-            let flags2 = nodes[p + 1].flag_index;
+            let mut flags1 = nodes[p].flag_index;
+            let mut flags2 = nodes[p + 1].flag_index;
+
+            // Children come after their parents, so theirs are final here.
+            if propagate {
+                flags1 = flag_if_children_moved(nodes, p, flags1);
+                flags2 = flag_if_children_moved(nodes, p + 1, flags2);
+            }
 
             // Did either move?
             if ((flags1 | flags2) & MOVED_NODE) == 0 {

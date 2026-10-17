@@ -559,9 +559,10 @@ pub(super) fn finalize_bodies(
     }
     bullet_bodies.extend_from_slice(&out.bullets);
 
-    // Move the proxies of enlarged shapes. (C marks them with atomics.)
+    // Move the proxies of enlarged shapes. (C marks them with atomics.) The refit after
+    // finalization flags their ancestors.
     for (proxy_key, fat_aabb) in update_shape_aabbs(world, &fast_result, &results) {
-        world.broad_phase.mark_proxy_moved(proxy_key, fat_aabb);
+        world.broad_phase.mark_leaf_moved(proxy_key, fat_aabb);
     }
 
     let task_context = &mut world.task_contexts[0];

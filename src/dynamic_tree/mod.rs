@@ -271,6 +271,9 @@ pub struct DynamicTree {
     /// Rebuild orders the nodes so the children follow parents. Cache friendly for queries
     /// and refitting. The order can be disrupted by proxy creation.
     pub(crate) dfs_ordered: bool,
+    /// Leaves were marked moved by [`DynamicTree::mark_leaf_moved`], and their ancestors
+    /// wait for the next refit.
+    pub(crate) leaf_marks_pending: bool,
 }
 
 impl Default for DynamicTree {
@@ -322,6 +325,7 @@ impl DynamicTree {
             leaf_centers: Vec::new(),
             rebuild_capacity: 0,
             dfs_ordered: true,
+            leaf_marks_pending: false,
         }
     }
 
@@ -342,6 +346,7 @@ impl DynamicTree {
             leaf_centers: Vec::new(),
             rebuild_capacity: 0,
             dfs_ordered: false,
+            leaf_marks_pending: false,
         }
     }
 

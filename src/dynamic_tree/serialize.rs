@@ -253,6 +253,7 @@ impl DynamicTree {
             leaf_centers: Vec::new(),
             rebuild_capacity: 0,
             dfs_ordered: header.dfs_ordered,
+            leaf_marks_pending: false,
         }
     }
 

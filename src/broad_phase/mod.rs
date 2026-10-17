@@ -162,6 +162,13 @@ impl BroadPhase {
         self.trees[proxy_type_ as usize].mark_proxy_moved(proxy_id_, aabb);
     }
 
+    /// [`DynamicTree::mark_leaf_moved`]: the ancestors are flagged by the next refit.
+    pub fn mark_leaf_moved(&mut self, proxy_key_: i32, aabb: Aabb) {
+        let proxy_type_ = proxy_type(proxy_key_);
+        let proxy_id_ = proxy_id(proxy_key_);
+        self.trees[proxy_type_ as usize].mark_leaf_moved(proxy_id_, aabb);
+    }
+
     /// (b3BroadPhase_GetShapeIndex)
     pub fn shape_index(&self, proxy_key_: i32) -> i32 {
         let proxy_type_ = proxy_type(proxy_key_);
