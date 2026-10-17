@@ -47,8 +47,8 @@ const COLLIDE_BLOCK: usize = 64;
 
 pub(crate) fn collide_contacts(
     pool: Option<&ThreadPool>,
-    work: &mut [&mut Contact],
-    block: impl Fn(&mut [&mut Contact]) -> CollideStats + Sync,
+    work: &mut [Contact],
+    block: impl Fn(&mut [Contact]) -> CollideStats + Sync,
 ) -> CollideStats {
     #[cfg(feature = "parallel")]
     if let Some(pool) = pool {

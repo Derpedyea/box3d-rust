@@ -112,6 +112,8 @@ pub(crate) struct CollideStats {
     pub changed_contacts: Vec<i32>,
     /// (color index, local index, manifold count)
     pub mesh_manifold_counts: Vec<(i32, i32, u16)>,
+    /// Contacts updated, to check the awake set.
+    pub updated: usize,
 }
 
 impl CollideStats {
@@ -119,6 +121,7 @@ impl CollideStats {
         self.sat_call_count += other.sat_call_count;
         self.sat_cache_hit_count += other.sat_cache_hit_count;
         self.recycled_contact_count += other.recycled_contact_count;
+        self.updated += other.updated;
         for (a, b) in self.manifold_counts.iter_mut().zip(other.manifold_counts) {
             *a += b;
         }
@@ -328,19 +331,6 @@ pub fn collide(world: &mut World, dt: f32) {
         return;
     }
 
-    let mut contact_indices = Vec::with_capacity(contact_count);
-    for i in 0..GRAPH_COLOR_COUNT as usize {
-        let color = &world.constraint_graph.colors[i];
-        contact_indices.extend_from_slice(&color.convex_contacts);
-        for spec in &color.contacts {
-            contact_indices.push(spec.contact_id);
-        }
-    }
-    debug_assert!(contact_indices.len() == touching_count);
-    if non_touching_count > 0 {
-        contact_indices.extend_from_slice(&world.solver_sets[AWAKE_SET as usize].contact_indices);
-    }
-
     let contact_id_capacity = world.contact_id_pool.id_capacity();
     for task in &mut world.task_contexts {
         task.contact_state_bit_set
@@ -353,12 +343,8 @@ pub fn collide(world: &mut World, dt: f32) {
 
     // Contact updates are independent and their outputs merge order-free, so they run in
     // contact id order (sequential memory) and, with the `parallel` feature, on many threads.
-    // Mark the contacts to update, then take them in id order (sequential memory). A
-    // bit set is cheaper than sorting the ids.
-    let mut selected = vec![0u64; world.contacts.len().div_ceil(64)];
-    for &id in &contact_indices {
-        selected[id as usize / 64] |= 1u64 << (id % 64);
-    }
+    // The contacts to update are the awake ones: touching in the graph colors, or not
+    // touching in the awake set.
     let params = ContactParams::new(world);
     let recycle_distance = world.contact_recycle_distance;
     let pool = world.thread_pool.clone();
@@ -382,38 +368,20 @@ pub fn collide(world: &mut World, dt: f32) {
             recycle_distance_non_touching: min_float(recycle_distance, speculative_distance()),
         };
 
-        // The contacts to update, in id order, borrowed out of the contact array.
-        let mut work: Vec<&mut Contact> = Vec::with_capacity(contact_indices.len());
-        for (block, chunk) in selected.iter().zip(contacts.chunks_mut(64)) {
-            let mut bits = *block;
-            if bits == 0 {
-                continue;
-            }
-            let mut rest = &mut chunk[..];
-            let mut base = 0usize;
-            while bits != 0 {
-                let i = bits.trailing_zeros() as usize;
-                let (_, tail) = rest.split_at_mut(i - base);
-                let (contact, tail) = tail.split_first_mut().expect("selected contact");
-                debug_assert!(contact.contact_id >= 0);
-                work.push(contact);
-                rest = tail;
-                base = i + 1;
-                bits &= bits - 1;
-            }
-        }
-        debug_assert!(work.len() == contact_indices.len());
-
         // The trees rebuild alongside: the narrow phase reads the fat AABBs, not the trees.
         let ((), stats) = crate::parallel::join(
             pool.as_deref(),
             || broad_phase.finish_tree_update(),
             || {
-                crate::parallel::collide_contacts(pool.as_deref(), &mut work, |block| {
+                crate::parallel::collide_contacts(pool.as_deref(), contacts, |block| {
                     let mut stats = CollideStats::default();
                     super::update::with_local_manifold(|local| {
                         for contact in block.iter_mut() {
-                            collide_contact(contact, &shared, &mut stats, local);
+                            if contact.set_index == AWAKE_SET {
+                                debug_assert!(contact.contact_id >= 0);
+                                stats.updated += 1;
+                                collide_contact(contact, &shared, &mut stats, local);
+                            }
                         }
                     });
                     stats
@@ -422,6 +390,7 @@ pub fn collide(world: &mut World, dt: f32) {
         );
         stats
     };
+    debug_assert!(stats.updated == contact_count);
 
     {
         let task = &mut world.task_contexts[0];
