@@ -206,6 +206,9 @@ pub struct BodyStateW {
     pub w: Vec3W,
     pub dp: Vec3W,
     pub dq: QuatW,
+    /// The body flags of each lane, as float bits (the delta position row's last lane).
+    /// Zero for null lanes, which read the identity state.
+    pub flags: FloatW,
 }
 
 // a + b
@@ -405,7 +408,7 @@ pub fn gather_bodies(states: &SolverStates, indices: &[i32; SIMD_WIDTH]) -> Body
 
     let [vx, vy, vz, _] = FloatW::transpose([rows[0][0], rows[1][0], rows[2][0], rows[3][0]]);
     let [wx, wy, wz, _] = FloatW::transpose([rows[0][1], rows[1][1], rows[2][1], rows[3][1]]);
-    let [px, py, pz, _] = FloatW::transpose([rows[0][2], rows[1][2], rows[2][2], rows[3][2]]);
+    let [px, py, pz, flags] = FloatW::transpose([rows[0][2], rows[1][2], rows[2][2], rows[3][2]]);
     let [qx, qy, qz, qs] = FloatW::transpose([rows[0][3], rows[1][3], rows[2][3], rows[3][3]]);
 
     BodyStateW {
@@ -432,6 +435,7 @@ pub fn gather_bodies(states: &SolverStates, indices: &[i32; SIMD_WIDTH]) -> Body
             },
             s: qs,
         },
+        flags,
     }
 }
 
@@ -441,16 +445,14 @@ pub fn scatter_bodies(states: &SolverStates, indices: &[i32; SIMD_WIDTH], body: 
     let zero = FloatW::ZERO;
     let v = FloatW::transpose([body.v.x, body.v.y, body.v.z, zero]);
     let w = FloatW::transpose([body.w.x, body.w.y, body.w.z, zero]);
+    let flags = body.flags.to_array();
     for (i, &index) in indices.iter().enumerate() {
-        // Indices are 0 for null
-        if index == 0 {
+        // Null lanes (index 0) read the identity state, which isn't dynamic.
+        if (flags[i].to_bits() & body_flags::DYNAMIC_FLAG) == 0 {
             continue;
         }
-        let index = (index - 1) as usize;
-        if (states.flags(index) & body_flags::DYNAMIC_FLAG) == 0 {
-            continue;
-        }
-        states.set_velocity_rows(index, v[i], w[i]);
+        debug_assert!(index != 0);
+        states.set_velocity_rows((index - 1) as usize, v[i], w[i]);
     }
 }
 
