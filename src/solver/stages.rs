@@ -1,7 +1,8 @@
 //! The solver's substep loop as C runs it: a fixed sequence of stages, each an array of
-//! blocks that every worker claims from a shared counter, with the workers spinning between
-//! stages instead of being dispatched per stage. (b3SolverTask, b3ExecuteMainStage,
-//! b3ExecuteStage)
+//! blocks that the workers claim, with the workers spinning between stages instead of being
+//! dispatched per stage. Each worker starts claiming at its own home block and sweeps the
+//! rest, so a worker mostly gets the same blocks every substep and finds their constraints
+//! still in its cache. (b3SolverTask, b3ExecuteMainStage, b3ExecuteStage)
 //!
 //! Worker 0 (the calling thread) orchestrates: it runs the overflow constraints, which the
 //! graph coloring doesn't cover, serially and in order, then publishes each stage and helps
@@ -42,7 +43,7 @@ pub(super) struct SolverWorld<'a> {
     pub enable_restitution_propagation: bool,
     pub restitution_iterations: i32,
 }
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -71,6 +72,9 @@ struct Stage {
     /// Index into the active colors for graph stages.
     color: usize,
     overflow: Overflow,
+    /// The claim value this stage's blocks hold before it runs: the claim value (stage index
+    /// plus one) of the last stage on the same blocks, or 0.
+    prev: u32,
 }
 
 /// Some constraints of one color.
@@ -80,9 +84,8 @@ enum Unit<'a> {
     Mesh(&'a mut [ContactConstraint]),
 }
 
-/// Per stage claim and completion counters.
+/// Per stage completion counter.
 struct StageSync {
-    next: AtomicUsize,
     done: AtomicUsize,
 }
 
@@ -108,6 +111,12 @@ struct Shared<'a, 'u> {
     stages: &'a [Stage],
     syncs: &'a [StageSync],
     units: &'a [Vec<Mutex<Unit<'u>>>],
+    /// Per block claim values: of each color's units, and of the body blocks.
+    unit_claims: &'a [Vec<AtomicU32>],
+    body_claims: &'a [AtomicU32],
+    worker_count: usize,
+    /// The orchestrator's pool thread index. Worker indices count from it.
+    main_thread: usize,
     body_count: usize,
     body_block: usize,
     body_block_count: usize,
@@ -127,22 +136,57 @@ impl Shared<'_, '_> {
         }
     }
 
-    /// Claim and run blocks of `stage_index` until none are left.
-    fn work(&self, stage_index: usize) {
+    fn claims(&self, stage: &Stage) -> &[AtomicU32] {
+        match stage.kind {
+            StageKind::IntegrateVelocities | StageKind::IntegratePositions => self.body_claims,
+            _ => &self.unit_claims[stage.color],
+        }
+    }
+
+    /// This thread's worker index: 0 for the orchestrator.
+    fn worker_index(&self) -> usize {
+        let n = self.worker_count;
+        (crate::parallel::thread_index() + n - self.main_thread % n) % n
+    }
+
+    /// Claim and run blocks of `stage_index`: sweep them all once from this worker's home
+    /// block, taking the unclaimed ones. (b3ExecuteStage)
+    fn work(&self, stage_index: usize, worker_index: usize) {
         let stage = &self.stages[stage_index];
-        let sync = &self.syncs[stage_index];
         let count = self.block_count(stage);
-        let mut completed = 0;
-        loop {
-            let block = sync.next.fetch_add(1, Ordering::Relaxed);
-            if block >= count {
-                break;
+        // (GetWorkerStartIndex)
+        let start = if count <= self.worker_count {
+            if worker_index >= count {
+                return;
             }
-            self.run_block(stage, block);
-            completed += 1;
+            worker_index
+        } else {
+            let per_worker = count / self.worker_count;
+            let remainder = count - per_worker * self.worker_count;
+            per_worker * worker_index + remainder.min(worker_index)
+        };
+        let claims = self.claims(stage);
+        let claim = stage_index as u32 + 1;
+        let mut completed = 0;
+        let mut block = start;
+        for _ in 0..count {
+            let c = &claims[block];
+            if c.load(Ordering::Relaxed) == stage.prev
+                && c.compare_exchange(stage.prev, claim, Ordering::Relaxed, Ordering::Relaxed)
+                    .is_ok()
+            {
+                self.run_block(stage, block);
+                completed += 1;
+            }
+            block += 1;
+            if block == count {
+                block = 0;
+            }
         }
         if completed > 0 {
-            sync.done.fetch_add(completed, Ordering::Release);
+            self.syncs[stage_index]
+                .done
+                .fetch_add(completed, Ordering::Release);
         }
     }
 
@@ -219,6 +263,7 @@ impl Shared<'_, '_> {
 
     /// A non-orchestrating worker: join each published stage until the orchestrator is done.
     fn worker_loop(&self) {
+        let worker_index = self.worker_index();
         let mut seen = 0;
         loop {
             let mut spins = 0u32;
@@ -238,7 +283,7 @@ impl Shared<'_, '_> {
                 }
             };
             seen = published;
-            self.work(published - 1);
+            self.work(published - 1, worker_index);
         }
     }
 }
@@ -336,6 +381,7 @@ pub(super) fn solve_substeps(
                 kind,
                 color,
                 overflow,
+                prev: 0,
             });
         }
         if active_color_count == 0 && overflow != Overflow::None {
@@ -344,6 +390,7 @@ pub(super) fn solve_substeps(
                 kind,
                 color: usize::MAX,
                 overflow,
+                prev: 0,
             });
         }
     };
@@ -352,6 +399,7 @@ pub(super) fn solve_substeps(
             kind: StageKind::IntegrateVelocities,
             color: 0,
             overflow: Overflow::None,
+            prev: 0,
         });
         graph(&mut stages, StageKind::WarmStart, Overflow::WarmStart);
         for _ in 0..SOLVER_ITERATIONS {
@@ -361,6 +409,7 @@ pub(super) fn solve_substeps(
             kind: StageKind::IntegratePositions,
             color: 0,
             overflow: Overflow::None,
+            prev: 0,
         });
         for _ in 0..RELAX_ITERATIONS {
             graph(&mut stages, StageKind::Relax, Overflow::Relax);
@@ -372,16 +421,32 @@ pub(super) fn solve_substeps(
         }
     }
 
+    // Chain each stage to the last one on the same blocks.
+    let mut last_body = 0;
+    let mut last_color = vec![0; active_color_count];
+    for (index, stage) in stages.iter_mut().enumerate() {
+        let last = match stage.kind {
+            StageKind::IntegrateVelocities | StageKind::IntegratePositions => &mut last_body,
+            _ if stage.color == usize::MAX => continue,
+            _ => &mut last_color[stage.color],
+        };
+        stage.prev = *last;
+        *last = index as u32 + 1;
+    }
     let syncs: Vec<StageSync> = stages
         .iter()
         .map(|_| StageSync {
-            next: AtomicUsize::new(0),
             done: AtomicUsize::new(0),
         })
+        .collect();
+    let unit_claims: Vec<Vec<AtomicU32>> = units
+        .iter()
+        .map(|u| u.iter().map(|_| AtomicU32::new(0)).collect())
         .collect();
 
     let body_count = states.len();
     let (body_block, body_block_count) = block_dim(body_count, 32, max_block_count);
+    let body_claims: Vec<AtomicU32> = (0..body_block_count).map(|_| AtomicU32::new(0)).collect();
     let shared = Shared {
         world,
         states,
@@ -389,6 +454,10 @@ pub(super) fn solve_substeps(
         stages: &stages,
         syncs: &syncs,
         units: &units,
+        unit_claims: &unit_claims,
+        body_claims: &body_claims,
+        worker_count,
+        main_thread: crate::parallel::thread_index(),
         body_count,
         body_block,
         body_block_count,
@@ -447,7 +516,7 @@ pub(super) fn solve_substeps(
                 let count = shared.block_count(stage);
                 if count > 1 {
                     shared.published.store(index + 1, Ordering::Release);
-                    shared.work(index);
+                    shared.work(index, 0);
                     let mut spins = 0u32;
                     while syncs[index].done.load(Ordering::Acquire) != count {
                         spins += 1;
@@ -458,6 +527,7 @@ pub(super) fn solve_substeps(
                         }
                     }
                 } else if count == 1 {
+                    shared.claims(stage)[0].store(index as u32 + 1, Ordering::Relaxed);
                     shared.run_block(stage, 0);
                 }
             }

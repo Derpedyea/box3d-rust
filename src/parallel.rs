@@ -387,6 +387,18 @@ pub(crate) fn zip_each<A: Send, B: Sync>(
     }
 }
 
+/// The calling thread's index in its pool, or 0 outside one.
+pub(crate) fn thread_index() -> usize {
+    #[cfg(feature = "parallel")]
+    {
+        rayon::current_thread_index().unwrap_or(0)
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        0
+    }
+}
+
 /// Run `f` on the pool (so parallel work inside it forks from a worker), or inline.
 pub(crate) fn install<R: Send>(pool: Option<&ThreadPool>, f: impl FnOnce() -> R + Send) -> R {
     #[cfg(feature = "parallel")]
