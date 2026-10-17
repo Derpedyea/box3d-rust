@@ -118,11 +118,12 @@ impl Default for ContactEdge {
 }
 
 /// Persistent interaction between two shapes. (b3Contact)
+///
+/// C layout, ordered so the fields the solver and narrow phase scan for share the first cache
+/// line, with the manifold right after.
 #[derive(Debug, Clone)]
+#[repr(C)]
 pub struct Contact {
-    /// Index of simulation set stored in World. NULL_INDEX when slot is free.
-    pub set_index: i32,
-
     /// Index into the constraint graph color array. NULL_INDEX for non-touching
     /// or sleeping contacts, and when the slot is free.
     pub color_index: i32,
@@ -130,28 +131,29 @@ pub struct Contact {
     /// Contact index within set or graph color. NULL_INDEX when slot is free.
     pub local_index: i32,
 
-    pub edges: [ContactEdge; 2],
-    pub shape_id_a: i32,
-    pub shape_id_b: i32,
-    pub child_index: i32,
-
-    /// A contact only belongs to an island if touching, otherwise NULL_INDEX.
-    pub island_id: i32,
-
-    /// Index into the island's contacts array for O(1) swap-removal.
-    /// NULL_INDEX when not in an island.
-    pub island_index: i32,
-
     /// Back index into World::contacts
     pub contact_id: i32,
+
+    /// contact_flags bits
+    pub flags: u32,
 
     /// Encoded body sim indices to avoid a cache miss accessing the body in the narrow phase.
     /// Awake: local index. Static: -(local index + 2). Otherwise NULL_INDEX.
     pub encoded_body_sim_a: i32,
     pub encoded_body_sim_b: i32,
 
-    /// contact_flags bits
-    pub flags: u32,
+    /// Index of simulation set stored in World. NULL_INDEX when slot is free.
+    pub set_index: i32,
+
+    pub shape_id_a: i32,
+    pub shape_id_b: i32,
+    pub child_index: i32,
+
+    /// Mixed friction and restitution
+    pub friction: f32,
+    pub restitution: f32,
+    pub rolling_resistance: f32,
+    pub tangent_velocity: Vec3,
 
     pub manifolds: crate::manifold::ManifoldList,
 
@@ -160,14 +162,17 @@ pub struct Contact {
     pub cached_rotation_b: Quat,
     pub cached_relative_pose: Transform,
 
-    /// Mixed friction and restitution
-    pub friction: f32,
-    pub restitution: f32,
-    pub rolling_resistance: f32,
-    pub tangent_velocity: Vec3,
-
     /// Usage determined by SIM_MESH_CONTACT in flags
     pub geometry: ContactGeometry,
+
+    pub edges: [ContactEdge; 2],
+
+    /// A contact only belongs to an island if touching, otherwise NULL_INDEX.
+    pub island_id: i32,
+
+    /// Index into the island's contacts array for O(1) swap-removal.
+    /// NULL_INDEX when not in an island.
+    pub island_index: i32,
 
     /// Monotonically advanced when a contact is allocated in this slot.
     /// Used to check for invalid ContactId.
