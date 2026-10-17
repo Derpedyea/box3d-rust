@@ -22,8 +22,7 @@ use crate::body::get_body_transform;
 use crate::constants::{CHILD_MASK, SHAPE_MASK, SHAPE_POWER};
 use crate::core::NULL_INDEX;
 use crate::dynamic_tree::{
-    overlap_aabb_v, overlap_v, DynamicTree, TreeNode, DEFAULT_MASK_BITS, MOVED_NODE, ROOT_NODE,
-    TREE_STACK_SIZE,
+    overlap_nodes, DynamicTree, TreeNode, DEFAULT_MASK_BITS, MOVED_NODE, ROOT_NODE, TREE_STACK_SIZE,
 };
 use crate::geometry::ShapeType;
 use crate::id::ShapeId;
@@ -323,7 +322,7 @@ fn test_pair(a: &TreeNode, b: &TreeNode) -> bool {
         return false;
     }
 
-    overlap_v(&a.aabb, &b.aabb)
+    overlap_nodes(a, b)
 }
 
 /// (static b3CollideProxyAndSubtree)
@@ -335,7 +334,6 @@ fn collide_proxy_and_subtree(
     context: &mut PairContext<'_>,
 ) {
     let proxy_mark = proxy.flag_index & MOVED_NODE;
-    let boxv = proxy.aabb;
     let shape_id = proxy.shape_index();
 
     let mut stack_count = 0usize;
@@ -351,7 +349,7 @@ fn collide_proxy_and_subtree(
                 continue;
             }
 
-            if !overlap_aabb_v(&boxv, &node.aabb) {
+            if !overlap_nodes(proxy, node) {
                 continue;
             }
 

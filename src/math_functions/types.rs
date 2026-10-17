@@ -76,6 +76,7 @@ pub struct Matrix3 {
 
 /// Axis aligned bounding box.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[repr(C)]
 pub struct Aabb {
     pub lower_bound: Vec3,
     pub upper_bound: Vec3,

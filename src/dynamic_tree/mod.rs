@@ -37,7 +37,7 @@ mod rebuild;
 mod serialize;
 mod validate;
 
-pub(crate) use aabbv::{overlap_aabb_v, overlap_v, union_pair_v, union_v};
+pub(crate) use aabbv::{overlap_nodes, overlap_v, union_pair_v, union_v};
 pub(crate) use serialize::{
     read_tree_header, read_tree_node, read_tree_proxy, write_tree_header, write_tree_node,
     write_tree_proxy,
@@ -83,6 +83,7 @@ pub const ROOT_NODE: i32 = 0;
 /// a 64 byte cache line. The root is at index zero and index one always empty.
 /// (b3TreeNode — 32 bytes, like C)
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
 pub struct TreeNode {
     /// The node bounding box
     pub aabb: Aabb,
