@@ -684,36 +684,45 @@ pub fn update_broad_phase_pairs(world: &mut World) {
             check_compounds,
         };
         // Blocks emit pair keys, which are sorted below, so blocks may run in any order on
-        // any worker.
+        // any worker. The cross pass has few seeds (one per static tree subtree), so it runs
+        // alongside the self pass instead of before it.
         let pool = pool.as_deref();
-        crate::parallel::for_blocks(
+        let mut cross_keys = Vec::new();
+        crate::parallel::join(
             pool,
-            worker_count,
-            cross_move_count as i32,
-            1,
-            &mut worker_keys,
-            |start, end, keys| {
-                cross_pairs_task(&cross_context, start as usize, end as usize, keys);
+            || {
+                crate::parallel::for_blocks(
+                    pool,
+                    worker_count,
+                    cross_move_count as i32,
+                    1,
+                    &mut cross_keys,
+                    |start, end, keys| {
+                        cross_pairs_task(&cross_context, start as usize, end as usize, keys);
+                    },
+                )
+            },
+            || {
+                // Collide the dynamic body tree against itself.
+                crate::parallel::for_blocks(
+                    pool,
+                    worker_count,
+                    dynamic_move_count as i32,
+                    64,
+                    &mut worker_keys,
+                    |start, end, keys| {
+                        self_pairs_task(
+                            world_ref,
+                            &moved_siblings,
+                            start as usize,
+                            end as usize,
+                            keys,
+                        );
+                    },
+                )
             },
         );
-
-        // Collide the dynamic body tree against itself.
-        crate::parallel::for_blocks(
-            pool,
-            worker_count,
-            dynamic_move_count as i32,
-            64,
-            &mut worker_keys,
-            |start, end, keys| {
-                self_pairs_task(
-                    world_ref,
-                    &moved_siblings,
-                    start as usize,
-                    end as usize,
-                    keys,
-                );
-            },
-        );
+        worker_keys.append(&mut cross_keys);
     }
 
     world.broad_phase.trees[BodyType::Static as usize].clear_moved();
